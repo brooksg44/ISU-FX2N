@@ -1,0 +1,6 @@
+# CMake / Ninja build tree, including the fetched picotool
+build/
+
+# Compiled host test binaries
+tests/test_fx_addr
+tests/test_modbus_map
