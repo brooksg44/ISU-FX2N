@@ -75,21 +75,18 @@ static void poll_run_stop_button(void) {
  * itself, so there is no terminal to print to - this LED is how the two
  * failure modes are told apart with no extra hardware:
  *
- *   dark              nothing is arriving  - host, driver, COM port or cable
- *   brief flickers    frames understood    - the link is working
- *   long 0.5 s blinks frames rejected      - our parser or the address map
+ *   dark              no protocol error
+ *   0.5 s pulse       frame rejected - our parser or the address map
+ *
+ * Valid traffic is intentionally not displayed. Monitor Mode polls about ten
+ * times per second, which otherwise makes this ERROR-labelled LED appear to
+ * report a continuous fault while communication is healthy.
  */
 static void update_comms_led(void) {
-    static uint32_t last_bytes = 0, last_bad = 0;
-    static uint32_t activity_ms = 0, bad_ms = 0;
+    static uint32_t last_bad = 0;
+    static uint32_t bad_ms = 0;
 
     uint32_t now = to_ms_since_boot(get_absolute_time());
-
-    uint32_t bytes = fx_protocol_rx_bytes();
-    if (bytes != last_bytes) {
-        last_bytes = bytes;
-        activity_ms = now;
-    }
 
     uint32_t bad = fx_protocol_frames_bad();
     if (bad != last_bad) {
@@ -97,7 +94,7 @@ static void update_comms_led(void) {
         bad_ms = now;
     }
 
-    bool on = (now - bad_ms < 500) || (now - activity_ms < 50);
+    bool on = now - bad_ms < 500;
     board_status_led(1, on);
 }
 

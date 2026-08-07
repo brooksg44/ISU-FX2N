@@ -14,6 +14,7 @@ add_executable(ISU-FX2N
     src/plc_scan.c
     src/fx_protocol.c
     src/fx_addr.c
+    src/fx_monitor.c
     src/plc_program.c
     src/plc_storage.c
     src/plc_exec.c
@@ -39,8 +40,12 @@ target_compile_definitions(ISU-FX2N PRIVATE
     # Consequence of the above: with the connection always assumed valid, a
     # write with no host reading spins until this timeout before discarding.
     # The default is 500 ms, which would stall the PLC scan - unacceptable in
-    # a controller. 1 ms is plenty when a host really is listening.
-    PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000
+    # a controller. GX Works performs some upload reads one byte at a time and
+    # can leave the CDC endpoint full for more than 20 ms between phases. Give
+    # a live programming connection enough time to consume the entire frame.
+    # This wait occurs only while USB still reports connected but its FIFO is
+    # full; normal PLC scans do not enter the output path.
+    PICO_STDIO_USB_STDOUT_TIMEOUT_US=500000
 )
 
 # Produces ISU-FX2N.uf2 in the build directory.

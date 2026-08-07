@@ -143,6 +143,10 @@ static void test_force_addresses(void) {
     fx_addr_force(4615, true);
     check("force 4615 -> X7 on", 1, plc_get_x(7));
 
+    fx_addr_force(0x1400 + 20, true);
+    check("force 0x1414 -> S20 on", 1, plc_get_s(20));
+    check("read 0x1414 -> S20", 1, fx_addr_force_read(0x1400 + 20));
+
     /* 0x0E00 is the special-relay block, which is where the error flags live. */
     fx_addr_force(3584 + 61, true);
     check("force 3645 -> M8061 on", 1, plc_get_m(8061));

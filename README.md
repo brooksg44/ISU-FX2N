@@ -126,13 +126,12 @@ rather than silently reading zero.
 
 ## Diagnostics
 
-**sts1 (GPIO3)** reports the state of the GX Works link with no tools attached:
+**sts1 (GPIO3)** is the programming-protocol error indicator:
 
 | sts1 | Meaning |
 |---|---|
-| dark | nothing arriving — host, driver, COM port or cable |
-| brief flickers | frames understood, link healthy |
-| long 0.5 s blinks | frames arriving but being rejected |
+| dark | no protocol error |
+| 0.5 s pulse | a frame was rejected |
 
 **Serial dump.** When the link has been idle for 2 s, the firmware prints a
 diagnostic report over USB CDC every 3 s: PLC identity, memory capacity,
@@ -201,14 +200,13 @@ the single most important idea to take from this source. See `plc_scan.h`.
 
 ## Known limitations
 
-- **Live ladder monitoring does not update.** GX Works registers a watch list
-  and reads packed results from a buffer; that sub-protocol is not implemented,
-  so contacts do not animate on screen. Downloading, running and forcing all
-  work. Monitor Mode also currently writes over **D512–D525** because the watch
-  list is treated as ordinary D registers.
+- **Live ladder monitoring refreshes slowly.** GX Works polls the packed
+  monitor buffer about once every 2.8 seconds over this serial connection, so
+  X, Y, S and M changes animate correctly but are not immediate. The monitor
+  list is stored separately and does not overwrite D registers.
 - **Remote RUN is not implemented.** A download issues remote STOP correctly;
   use I9 to return to RUN.
-- **Force** works for X, Y, M and M8000-range devices. S, T and C have not been
+- **Force** works for X, Y, M, S and M8000-range devices. T and C have not been
   located in the force address space and are ignored rather than guessed at.
 - Applied instructions beyond `MOV` are not implemented (see above).
 

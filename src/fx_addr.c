@@ -143,9 +143,30 @@ void fx_addr_write_byte(uint16_t addr, uint8_t value) {
 }
 
 bool fx_addr_force_known(uint16_t a) {
-    return a < FX_FORCE_Y_BASE + PLC_NUM_Y ||
+    return a < PLC_NUM_M ||
+           (a >= FX_FORCE_Y_BASE && a < FX_FORCE_Y_BASE + PLC_NUM_Y) ||
            (a >= FX_FORCE_MS_BASE && a < FX_FORCE_MS_BASE + PLC_NUM_M_SPECIAL) ||
-           (a >= FX_FORCE_X_BASE && a < FX_FORCE_X_BASE + PLC_NUM_X);
+           (a >= FX_FORCE_X_BASE && a < FX_FORCE_X_BASE + PLC_NUM_X) ||
+           (a >= 0x1400 && a < 0x1400 + PLC_NUM_S);
+}
+
+bool fx_addr_force_read(uint16_t a) {
+    if (a < PLC_NUM_M) {
+        return plc_get_m(a);
+    }
+    if (a >= FX_FORCE_Y_BASE && a < FX_FORCE_Y_BASE + PLC_NUM_Y) {
+        return plc_get_y((uint16_t)(a - FX_FORCE_Y_BASE));
+    }
+    if (a >= FX_FORCE_MS_BASE && a < FX_FORCE_MS_BASE + PLC_NUM_M_SPECIAL) {
+        return plc_get_m((uint16_t)(PLC_M_SPECIAL_BASE + a - FX_FORCE_MS_BASE));
+    }
+    if (a >= FX_FORCE_X_BASE && a < FX_FORCE_X_BASE + PLC_NUM_X) {
+        return plc_get_x((uint16_t)(a - FX_FORCE_X_BASE));
+    }
+    if (a >= 0x1400 && a < 0x1400 + PLC_NUM_S) {
+        return plc_get_s((uint16_t)(a - 0x1400));
+    }
+    return false;
 }
 
 void fx_addr_force(uint16_t a, bool on) {
@@ -157,6 +178,8 @@ void fx_addr_force(uint16_t a, bool on) {
         plc_set_m((uint16_t)(PLC_M_SPECIAL_BASE + (a - FX_FORCE_MS_BASE)), on);
     } else if (a >= FX_FORCE_X_BASE && a < FX_FORCE_X_BASE + PLC_NUM_X) {
         plc_set_x((uint16_t)(a - FX_FORCE_X_BASE), on);
+    } else if (a >= 0x1400 && a < 0x1400 + PLC_NUM_S) {
+        plc_set_s((uint16_t)(a - 0x1400), on);
     }
     /* Anything else is in a region we have not placed - ignored on purpose. */
 }

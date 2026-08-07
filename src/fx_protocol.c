@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "fx_addr.h"
+#include "fx_monitor.h"
 #include "plc_memory.h"
 #include "plc_exec.h"
 #include "plc_program.h"
@@ -152,6 +153,15 @@ static void send_simple(uint8_t b) {
     stdio_flush();
 }
 
+static void send_frame(const uint8_t *frame, uint16_t len) {
+    /* Give the complete response to the Pico stdio driver in one operation.
+     * Its USB backend advances TinyUSB while waiting for endpoint space.
+     * Calling tud_cdc_write() directly bypassed that service loop and stalled
+     * after the first nine bytes on the Windows CDC connection. */
+    stdio_put_string((const char *)frame, len, false, false);
+    stdio_flush();
+}
+
 /* A rejected frame is worth counting separately: it means bytes are arriving
  * but we are failing to understand them. */
 static void reject(void) {
@@ -160,21 +170,52 @@ static void reject(void) {
 }
 
 static void send_read_response(uint16_t addr, uint8_t count) {
+    /* Largest observed reply is an E4 read of 64 words = 128 bytes. Build the
+     * complete ASCII frame before handing it to USB. Sending one character at
+     * a time made 64-byte reads intermittently stop at a USB packet boundary,
+     * leaving GX Works without ETX/checksum even though the request was
+     * counted as successful. */
+    uint8_t frame[1 + 128 * 2 + 1 + 2];
+    uint16_t n = 0;
     uint8_t sum = 0;
-    send_byte(STX);
+    frame[n++] = STX;
     for (uint8_t i = 0; i < count; i++) {
-        uint8_t v = fx_addr_read_byte((uint16_t)(addr + i));
+        uint16_t a = (uint16_t)(addr + i);
+        uint8_t v = fx_monitor_owns_read(a) ? fx_monitor_read(a)
+                                            : fx_addr_read_byte(a);
         uint8_t hi = hex_digit((uint8_t)(v >> 4));
         uint8_t lo = hex_digit((uint8_t)(v & 0x0F));
-        send_byte(hi);
-        send_byte(lo);
+        frame[n++] = hi;
+        frame[n++] = lo;
         sum = (uint8_t)(sum + hi + lo);
     }
-    send_byte(ETX);
+    frame[n++] = ETX;
     sum = (uint8_t)(sum + ETX);
-    send_byte(hex_digit((uint8_t)(sum >> 4)));
-    send_byte(hex_digit((uint8_t)(sum & 0x0F)));
-    stdio_flush();
+    frame[n++] = hex_digit((uint8_t)(sum >> 4));
+    frame[n++] = hex_digit((uint8_t)(sum & 0x0F));
+    send_frame(frame, n);
+}
+
+/* E4 starts a program upload range. A known-good FX emulator replies with the
+ * requested memory-space digit and starting address, followed by the normal
+ * ETX/checksum. For example E41 805C 0F00 -> STX "1805C" ETX "14". */
+static void send_upload_range_response(uint8_t space, uint16_t addr) {
+    uint8_t frame[9];
+    uint8_t n = 0;
+    uint8_t sum = 0;
+    frame[n++] = STX;
+    frame[n++] = space;
+    sum = (uint8_t)(sum + space);
+    for (int shift = 12; shift >= 0; shift -= 4) {
+        uint8_t ch = hex_digit((uint8_t)((addr >> shift) & 0x0F));
+        frame[n++] = ch;
+        sum = (uint8_t)(sum + ch);
+    }
+    frame[n++] = ETX;
+    sum = (uint8_t)(sum + ETX);
+    frame[n++] = hex_digit((uint8_t)(sum >> 4));
+    frame[n++] = hex_digit((uint8_t)(sum & 0x0F));
+    send_frame(frame, n);
 }
 
 /* rx holds a complete frame: STX ... ETX SS SS. */
@@ -252,6 +293,37 @@ static void handle_frame(void) {
             uint32_t sub;
 
             /*
+             * Program-upload range command used by GX Works 2:
+             *
+             *   02 'E' '4' '1' "805C" "0F00" 03 "63"
+             *            space  address  15 words, little-endian
+             *
+             * The reply echoes "1805C" (space and address); GX subsequently
+             * uses E01 to transfer the actual data. Keeping this separate
+             * from E00/E01 also prevents the extra count byte being mistaken
+             * for payload.
+             */
+            if (etx_pos == 12 && rx[2] == '4' &&
+                (rx[3] == '0' || rx[3] == '1')) {
+                uint32_t count_lo, count_hi;
+                if (!parse_hex(&rx[4], 4, &addr) ||
+                    !parse_hex(&rx[8], 2, &count_lo) ||
+                    !parse_hex(&rx[10], 2, &count_hi)) {
+                    reject();
+                    return;
+                }
+                uint32_t words = count_lo | (count_hi << 8);
+                if (words == 0 || words > 64 ||
+                    (rx[3] == '1' && addr < FX_ADDR_PROGRAM)) {
+                    reject();
+                    return;
+                }
+                stat_frames_ok++;
+                send_upload_range_response(rx[3], (uint16_t)addr);
+                return;
+            }
+
+            /*
              * Extended force, a different shape from the read/write forms:
              *
              *   02 'E' '7' "760E" 03 "61"   force ON
@@ -308,7 +380,12 @@ static void handle_frame(void) {
                         reject();
                         return;
                     }
-                    fx_addr_write_byte((uint16_t)(addr + i), (uint8_t)v);
+                    uint16_t a = (uint16_t)(addr + i);
+                    if (fx_monitor_owns_write(a)) {
+                        fx_monitor_write(a, (uint8_t)v);
+                    } else {
+                        fx_addr_write_byte(a, (uint8_t)v);
+                    }
                 }
                 if (addr >= FX_ADDR_PROGRAM) {
                     plc_storage_mark_dirty();
@@ -320,6 +397,9 @@ static void handle_frame(void) {
             if (etx_pos != 10) {
                 reject();
                 return;
+            }
+            if (addr == FX_MON_RESULT) {
+                fx_monitor_sample();
             }
             stat_frames_ok++;
             send_read_response((uint16_t)addr, (uint8_t)count);

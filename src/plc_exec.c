@@ -66,11 +66,56 @@
 
 #define WORD_BLANK 0xFFFF
 
+#define STL_MAX_SOURCES 8
+#define STL_RESET_WORDS ((PLC_NUM_S + 31) / 32)
+
+typedef struct {
+    bool in_stl;
+    bool accepting_sources;
+    bool step_gate;
+    uint16_t sources[STL_MAX_SOURCES];
+    uint8_t source_count;
+    uint32_t reset_at_end[STL_RESET_WORDS];
+} stl_context_t;
+
 static uint16_t unknown_count;
 static uint16_t last_bad_opcode;
 
 static uint16_t fetch(uint32_t off) {
     return (uint16_t)(plc_program_read(off) | ((uint16_t)plc_program_read(off + 1) << 8));
+}
+
+static void stl_begin_step(stl_context_t *stl, uint16_t state, bool merge) {
+    if (!merge) {
+        stl->source_count = 0;
+        stl->step_gate = true;
+    }
+    stl->in_stl = true;
+    stl->accepting_sources = true;
+    stl->step_gate = stl->step_gate && plc_get_s(state);
+    if (stl->source_count < STL_MAX_SOURCES) {
+        stl->sources[stl->source_count++] = state;
+    } else {
+        unknown_count++;
+        last_bad_opcode = (uint16_t)((OPCODE_STL << 8) | (state & 0xFF));
+    }
+}
+
+static void stl_queue_transfer(stl_context_t *stl) {
+    for (uint8_t i = 0; i < stl->source_count; i++) {
+        uint16_t state = stl->sources[i];
+        if (state < PLC_NUM_S) {
+            stl->reset_at_end[state / 32] |= (uint32_t)1u << (state % 32);
+        }
+    }
+}
+
+static void stl_finish_scan(stl_context_t *stl) {
+    for (uint16_t state = 0; state < PLC_NUM_S; state++) {
+        if ((stl->reset_at_end[state / 32] >> (state % 32)) & 1u) {
+            plc_set_s(state, false);
+        }
+    }
 }
 
 /* Expands a device nibble and operand into a device number, applying the
@@ -139,6 +184,7 @@ void plc_exec_scan(void) {
      */
     bool result = false;
     bool pls_pending = false;
+    stl_context_t stl = {0};
 
     /*
      * MPS/MRD/MPP branch stack, and the block stack used by ANB/ORB. A real FX
@@ -168,6 +214,11 @@ void plc_exec_scan(void) {
         uint8_t op = (uint8_t)(opcode >> 4);
         uint8_t dev = (uint8_t)(opcode & 0x0F);
 
+        bool consecutive_stl = stl.in_stl && stl.accepting_sources;
+        if (opcode != OPCODE_STL) {
+            stl.accepting_sources = false;
+        }
+
         /* Preset coils: the next two words carry a 32-bit constant. */
         if (opcode == OPCODE_OUT_T || opcode == OPCODE_OUT_C) {
             uint16_t lo = fetch(off);
@@ -185,6 +236,7 @@ void plc_exec_scan(void) {
 
         if (opcode == 0x00) {
             if (operand == MISC_END) {
+                stl_finish_scan(&stl);
                 return;
             }
             if (operand == MISC_PLS_PREFIX) {
@@ -196,7 +248,9 @@ void plc_exec_scan(void) {
                 uint16_t v = fetch(off);
                 off += 2;
                 if (result) {
-                    plc_set_s((uint16_t)(v & 0xFF), true);
+                    uint16_t state = (uint16_t)(v & 0xFF);
+                    plc_set_s(state, true);
+                    if (stl.in_stl) stl_queue_transfer(&stl);
                 }
                 continue;
             }
@@ -250,12 +304,18 @@ void plc_exec_scan(void) {
             continue;
         }
 
-        /* STL activates a step: the rung runs only while its state is on. */
+        /* STL creates a local bus gated by its state. Consecutive STL
+         * instructions form a multiple-state merge (logical AND). */
         if (opcode == OPCODE_STL) {
-            result = plc_get_s(operand);
+            stl_begin_step(&stl, operand, consecutive_stl);
+            result = stl.step_gate;
             continue;
         }
         if (opcode == OPCODE_RET) {
+            stl.in_stl = false;
+            stl.accepting_sources = false;
+            stl.source_count = 0;
+            stl.step_gate = true;
             result = false;
             continue;
         }
@@ -267,21 +327,38 @@ void plc_exec_scan(void) {
         switch (op) {
             case OP_LD:
                 if (block_sp < 16) block[block_sp++] = result;
-                result = read_bit(dev, operand);
+                result = (!stl.in_stl || stl.step_gate) && read_bit(dev, operand);
                 break;
             case OP_LDI:
                 if (block_sp < 16) block[block_sp++] = result;
-                result = !read_bit(dev, operand);
+                result = (!stl.in_stl || stl.step_gate) && !read_bit(dev, operand);
                 break;
             case OP_AND: result = result && read_bit(dev, operand); break;
             case OP_ANI: result = result && !read_bit(dev, operand); break;
-            case OP_OR: result = result || read_bit(dev, operand); break;
-            case OP_ORI: result = result || !read_bit(dev, operand); break;
+            case OP_OR:
+                result = result || ((!stl.in_stl || stl.step_gate) && read_bit(dev, operand));
+                break;
+            case OP_ORI:
+                result = result || ((!stl.in_stl || stl.step_gate) && !read_bit(dev, operand));
+                break;
 
-            case OP_OUT: write_bit(dev, operand, result); break;
+            case OP_OUT:
+                if (stl.in_stl && dev <= 0x3) {
+                    /* OUT S is a transfer inside STL, not an ordinary coil. */
+                    if (result) {
+                        write_bit(dev, operand, true);
+                        stl_queue_transfer(&stl);
+                    }
+                } else {
+                    write_bit(dev, operand, result);
+                }
+                break;
 
             case OP_SET:
-                if (result) write_bit(dev, operand, true);
+                if (result) {
+                    write_bit(dev, operand, true);
+                    if (stl.in_stl && dev <= 0x3) stl_queue_transfer(&stl);
+                }
                 break;
 
             case OP_RST:
@@ -314,4 +391,6 @@ void plc_exec_scan(void) {
                 break;
         }
     }
+
+    stl_finish_scan(&stl);
 }

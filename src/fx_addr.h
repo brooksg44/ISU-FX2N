@@ -76,6 +76,7 @@ void fx_addr_write_bit(uint16_t addr, uint8_t bit, bool v);
 #define FX_FORCE_END 4864
 
 void fx_addr_force(uint16_t force_addr, bool on);
+bool fx_addr_force_read(uint16_t force_addr);
 bool fx_addr_force_known(uint16_t force_addr);
 
 #endif /* FX_ADDR_H */
