@@ -227,3 +227,13 @@ the extended command set, the parameter block, the instruction encoding and the
 force address space — was derived by capturing what GX Works 2 actually sends
 and reading it back. Each finding is documented at the point in the source
 where it is used, together with what was observed versus inferred.
+
+---
+
+## License
+
+MIT — see `LICENSE`.
+
+Mitsubishi, FX2N, GX Works and GX Developer are trademarks of Mitsubishi
+Electric. This project is an independent, unaffiliated reimplementation; the
+vendor reference manuals it was developed against are not redistributed here.

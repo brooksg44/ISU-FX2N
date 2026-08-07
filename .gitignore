@@ -16,3 +16,8 @@ projects/TestCommsPLF.gxw
 
 # WSL scratch file
 .wslprobe
+
+# Internal working notes and agent instructions
+CLAUDE.md
+To-Do.md
+.claude/
