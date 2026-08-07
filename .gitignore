@@ -4,3 +4,15 @@ build/
 # Compiled host test binaries
 tests/test_fx_addr
 tests/test_modbus_map
+tests/test_fx_monitor
+tests/test_plc_exec
+
+# Vendor reference manuals: kept locally, not redistributable
+*.pdf
+!FX1N-Trainer-Pins.pdf
+
+# Local GX Works scratch projects
+projects/TestCommsPLF.gxw
+
+# WSL scratch file
+.wslprobe
