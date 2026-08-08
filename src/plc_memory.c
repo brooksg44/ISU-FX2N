@@ -6,6 +6,20 @@ plc_memory_t plc_mem;
 
 void plc_memory_init(void) { memset(&plc_mem, 0, sizeof(plc_mem)); }
 
+void plc_memory_reset_nonretentive(void) {
+    /* X is the physical input image and is refreshed at scan start. */
+    memset(plc_mem.y, 0, sizeof(plc_mem.y));
+    memset(plc_mem.m, 0, sizeof(plc_mem.m));
+    memset(plc_mem.s, 0, sizeof(plc_mem.s));
+    memset(plc_mem.d, 0, sizeof(plc_mem.d));
+
+    /* T246-T255 are retentive; T0-T245 clear on a RUN transition. */
+    memset(&plc_mem.t[0], 0, 246u * sizeof(plc_mem.t[0]));
+
+    /* C100-C255 are retentive; C0-C99 clear on a RUN transition. */
+    memset(&plc_mem.c[0], 0, 100u * sizeof(plc_mem.c[0]));
+}
+
 /* Shared bit helpers. Keeping the range check in one place is what makes the
  * per-device accessors safe to call with untrusted indices. */
 static bool bit_get(const uint16_t *words, uint16_t count, uint16_t i) {

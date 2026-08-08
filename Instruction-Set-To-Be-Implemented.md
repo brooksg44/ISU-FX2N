@@ -126,6 +126,38 @@ The following are known or likely gaps for the supplied project:
 - any additional edge, arithmetic, comparison, shift, or indirect operations
   revealed by the compiled downloads
 
+The `FSM_PN` capture established that GX Works automatic BOOL variables in its
+reported `M1425-M1535` VAR range use the normal M-device nibble extension.
+For example, `0xCDFE` is `OUT M1534`, while `0x5DFE` and `0x6DFE` are contacts
+of the same bit. M nibbles `8-D` and the Structured Ladder extended `OUT S`
+form (`0x0005` followed by `0x80nn`) are now implemented.
+The capture also confirms `0x001C` as the compiled program-body terminator
+immediately before the erased separator and final `END`; execution stops there
+without recording an unknown opcode.
+
+The `FSM_SR_NO_SC` capture established the Structured Ladder extended `RST S`
+form (`0x0007` followed by `0x80nn`). It also confirmed `ZRST Y0 Y3` as
+`0x0060 0x8400 0x8005 0x8403 0x8005`. Both forms are implemented; the former
+prevents set/reset state machines from accumulating every visited state.
+
+The `FSM_EQU` capture established `EQ_E-2` as bytes `D0 01`, fetched by the
+little-endian interpreter as word `0x01D0`, followed by two typed 16-bit
+operands. Captured operands include D registers (`0x86nn 0x86nn`) and
+integer constants (`0x82nn 0x80nn`). The comparison starts its Structured
+Ladder network with the equality result. The existing `0x0028` MOVE form was
+also confirmed for both constant-to-D and D-to-D moves.
+
+The FSM_EQU monitor list established that ordinary D-register protocol byte
+addresses begin at `0x4000`, not `0x1000`: D100 and D101 are listed as
+`0x40C8` and `0x40CA`. The monitor/device mapping now uses that captured base.
+
+The `FSM_SHL` capture established `SFTL` as `0x0056` followed by typed source
+bit, destination bit, total-length, and shift-count operands. The observed
+form is `SFTL M1523 S10 K9 K1`; it shifts S10-S18 toward the higher state
+numbers and loads M1523 into S10. Program capacity is now 16000 steps, backed
+by a 32000-byte instruction image and eight flash sectors of persistent
+storage.
+
 ## Which UF2 To Use for DMS Captures
 
 Use the current `build/ISU-FX2N.uf2` for DMS captures of GX Works downloads.
@@ -180,6 +212,26 @@ The most useful DMS records are the `E11` program-memory writes at addresses
 `0x8000` and above. Capturing the whole exchange is still preferable because
 parameter data and program boundaries may explain how GX Works interprets the
 compiled code.
+
+### `FSM_STL` capture (2026-08-08)
+
+The supplied Write-to-PLC capture proves that `FSM_STL` compiles and downloads
+to the emulated FX2N. GX Works writes the 92-byte parameter header at `0x8000`,
+then writes compiled program data beginning at `0x805C` in three 64-byte
+`E11` blocks (`0x805C`, `0x809C`, and `0x80DC`). It fills the remaining program
+area with `0xFF`, announces the 15-word compiled range with `E41 805C 0F00`,
+and sends `E11 805E 02 0FB4` as a transfer check/finalization transaction.
+That last value must be acknowledged but not stored as ladder code: doing so
+overwrites the downloaded `0x0006` SET-S instruction, preventing the opening
+`LD M8002` rung from setting `S10`.
+
+The same capture identifies why GX Works could not enter Monitor Mode. After
+the download it closes the serial port and reopens it about 2.94 seconds later.
+The firmware's former automatic diagnostic dump fired after two idle seconds
+and queued human-readable text on the protocol port. The reconnecting GX Works
+sent `ENQ` (`0x05`) but read ASCII `0x32` (`'2'`) rather than `ACK` (`0x06`).
+Automatic idle dumps are therefore disabled; disconnect GX Works, open a
+terminal, and send a bare `?` to request diagnostics explicitly.
 
 ## Recommended Implementation Order
 

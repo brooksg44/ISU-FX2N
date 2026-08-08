@@ -79,8 +79,8 @@ void plc_scan_init(void) {
     plc_set_d(D_PLC_TYPE, FX2N_TYPE_VERSION);
     plc_set_d(D_MODEL_CODE, FX2N_MODEL_CODE);
     plc_set_d(D_WATCHDOG, FX2N_WATCHDOG_MS);
-    plc_set_d(D_MEMORY_CAPACITY, FX2N_MEMORY_8K);
-    plc_set_d(D_MEMORY_CAPACITY2, FX2N_MEMORY_8K);
+    plc_set_d(D_MEMORY_CAPACITY, FX2N_MEMORY_16K);
+    plc_set_d(D_MEMORY_CAPACITY2, FX2N_MEMORY_16K);
     plc_set_d(D_MEMORY_TYPE, FX2N_MEMORY_TYPE_RAM);
 
     mode = PLC_MODE_STOP;
@@ -96,13 +96,17 @@ void plc_scan_set_mode(plc_mode_t new_mode) {
     if (new_mode == mode) {
         return;
     }
-    mode = new_mode;
-    /* Entering RUN arms the first-scan pulse; leaving it clears the outputs
-     * so nothing is left energised in STOP. */
-    first_scan = (mode == PLC_MODE_RUN);
-    if (mode == PLC_MODE_STOP) {
+    if (new_mode == PLC_MODE_RUN) {
+        /* A real STOP -> RUN transition starts the program from a clean
+         * non-retentive device image. Do this before arming M8002 so the
+         * first user scan can initialise an STL state such as S10. */
+        plc_memory_reset_nonretentive();
+        first_scan = true;
+    } else {
+        first_scan = false;
         board_write_outputs(0);
     }
+    mode = new_mode;
 }
 
 bool plc_scan_is_first(void) { return first_scan; }

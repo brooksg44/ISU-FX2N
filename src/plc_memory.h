@@ -82,7 +82,7 @@
  * Memory cassette description, also determined experimentally.
  *
  *   D8002=8 alone          -> "Data exceeds capacity of the memory cassette"
- *   D8002=8 with D8102=8   -> capacity check passes
+ *   D8002 matching D8102   -> capacity check passes
  *   D8003=0x01             -> "cannot write during ROM operation" (read-only)
  *   D8003=0x00             -> RAM, writable
  *
@@ -94,7 +94,7 @@
 #define FX2N_TYPE_VERSION 24100
 #define FX2N_MODEL_CODE 24100
 #define FX2N_WATCHDOG_MS 200
-#define FX2N_MEMORY_8K 8 /* 8000 program steps */
+#define FX2N_MEMORY_16K 16 /* 16000 program steps */
 
 typedef struct {
     uint16_t current;  /* elapsed value */
@@ -126,6 +126,15 @@ extern plc_memory_t plc_mem;
 
 /* Clears every device. Retentive ranges are restored separately from flash. */
 void plc_memory_init(void);
+
+/*
+ * Applies the current FX2N STOP -> RUN clear policy. Inputs, special relays,
+ * special registers, retentive timers (T246-T255), and retentive counters
+ * (C100-C255) are preserved. The emulator does not yet import configurable
+ * M/S/D latch ranges from the PLC parameters, so those general device
+ * families are presently treated as non-retentive.
+ */
+void plc_memory_reset_nonretentive(void);
 
 /* Bit device access. Out-of-range indices read false and ignore writes, so a
  * malformed download cannot scribble over memory. */

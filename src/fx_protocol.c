@@ -28,6 +28,12 @@ static uint32_t stat_rx_bytes;
 static uint32_t stat_frames_ok;
 static uint32_t stat_frames_bad;
 
+/* E41 announces the compiled-program range. In the observed download GX
+ * follows it with a two-byte E11 transaction at range_start + 2 containing a
+ * transfer check value, not a replacement instruction word. */
+static bool program_check_pending;
+static uint16_t program_check_addr;
+
 /*
  * Frame tracer. The FX2N extended address map is not fully documented in any
  * source available to this project, so rather than guess at what GX Works 2
@@ -318,6 +324,10 @@ static void handle_frame(void) {
                     reject();
                     return;
                 }
+                if (rx[3] == '1') {
+                    program_check_pending = true;
+                    program_check_addr = (uint16_t)(addr + 2u);
+                }
                 stat_frames_ok++;
                 send_upload_range_response(rx[3], (uint16_t)addr);
                 return;
@@ -374,6 +384,25 @@ static void handle_frame(void) {
                     reject();
                     return;
                 }
+                /*
+                 * FSM_STL capture:
+                 *   E41 805C 0F00       announce 15-word program range
+                 *   E11 805E 02 0FB4   transfer check/finalization value
+                 *
+                 * Treating the latter as ordinary memory replaced the
+                 * already-downloaded 0x0006 SET-S instruction with 0xB40F,
+                 * so M8002 could no longer initialise S10. Acknowledge this
+                 * narrowly identified post-E41 transaction without storing
+                 * it in the instruction image.
+                 */
+                if (program_check_pending && count == 2 &&
+                    addr == program_check_addr) {
+                    program_check_pending = false;
+                    stat_frames_ok++;
+                    send_simple(ACK);
+                    return;
+                }
+                program_check_pending = false;
                 for (uint32_t i = 0; i < count; i++) {
                     uint32_t v;
                     if (!parse_hex(&rx[10 + i * 2], 2, &v)) {
@@ -508,38 +537,56 @@ static void trace_dump(void) {
     if (trace_count == 0) {
         printf("(no non-routine frames captured)\r\n");
     }
+
+    /* Some serial-monitor tools retain only the tail of a burst. Repeat a
+     * compact execution summary last, together with the two areas relevant
+     * to FSM_EQU's initial and end-of-scan MOVE_E instructions. */
+    printf("--- compact execution summary ---\r\n");
+    printf("mode=%s M8000=%u M8002=%u D100=%u D101=%u "
+           "unknown=%u last=0x%04X\r\n",
+           plc_scan_get_mode() == PLC_MODE_RUN ? "RUN" : "STOP",
+           plc_get_m(M_RUN_MONITOR), plc_get_m(M_INITIAL_PULSE),
+           plc_get_d(100), plc_get_d(101), plc_exec_unknown_count(),
+           plc_exec_last_bad_opcode());
+    printf("code+005C:");
+    for (uint16_t off = 0x5C; off < 0x7C; off++) {
+        printf(" %02X", plc_program_read(off));
+    }
+    printf("\r\ncode+019C:");
+    for (uint16_t off = 0x19C; off < 0x1BC; off++) {
+        printf(" %02X", plc_program_read(off));
+    }
+    printf("\r\nmonitor-list:");
+    for (uint16_t off = 0; off < 32; off++) {
+        printf(" %02X", fx_monitor_list_byte(off));
+    }
+    printf("\r\nmonitor-result:");
+    for (uint16_t off = 0; off < fx_monitor_result_len(); off++) {
+        printf(" %02X", fx_monitor_result_byte(off));
+    }
+    printf("\r\n");
     printf("=== end ===\r\n");
     stdio_flush();
 }
 
-/*
- * Prints the trace by itself once the link has gone quiet, so seeing it does
- * not depend on the terminal successfully sending anything. GX Works polls
- * continuously while connected, so the idle test means this can never
- * interrupt a live session.
- */
 void fx_protocol_idle_dump(void) {
-    static uint32_t seen_bytes = 0;
-    static uint32_t last_rx_ms = 0;
-    static uint32_t last_dump_ms = 0;
-
-    uint32_t now = to_ms_since_boot(get_absolute_time());
-
-    if (stat_rx_bytes != seen_bytes) {
-        seen_bytes = stat_rx_bytes;
-        last_rx_ms = now;
-        return;
-    }
-    if (now - last_rx_ms < 2000 || now - last_dump_ms < 3000) {
-        return;
-    }
-    last_dump_ms = now;
-    trace_dump();
+    /*
+     * Intentionally empty. GX Works closes and reopens the COM port between
+     * download and Monitor Mode. A capture of FSM_STL showed a 2.94 s gap;
+     * the former two-second idle dump therefore put diagnostic text in the
+     * CDC transmit queue. On reconnect GX Works sent ENQ but received the
+     * queued ASCII text instead of ACK, so Monitor Mode could not start.
+     *
+     * Diagnostics remain available with the explicit bare '?' command after
+     * GX Works has been disconnected. Protocol output must otherwise only be
+     * emitted in response to protocol input.
+     */
 }
 
 void fx_protocol_init(void) {
     rx_len = 0;
     in_frame = false;
+    program_check_pending = false;
     /* Raw binary channel: stdio must not rewrite \n as \r\n. */
     stdio_set_translate_crlf(&stdio_usb, false);
 }

@@ -122,11 +122,187 @@ static void test_ladder_set_is_not_a_transfer(void) {
     check("ordinary ladder SET resets no source", 1, plc_get_s(20));
 }
 
+static void test_fsm_stl_initial_pulse_sets_s10(void) {
+    /* Exact leading words captured from the FSM_STL download. The 0x0060
+     * ZRST block is deliberately omitted here: this isolates the first-scan
+     * contact and the extended SET-S form before the first STL step. */
+    static const uint16_t program[] = {
+        0x2F02, 0x0006, 0x800A, 0xF00A, 0xF7FF, 0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_INITIAL_PULSE, true);
+
+    plc_exec_scan();
+
+    check("captured LD M8002 / SET S10 initializes S10", 1, plc_get_s(10));
+    check("captured first-scan prefix has no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
+static void test_fsm_pn_automatic_m_and_out_s(void) {
+    /* Exact forms captured from FSM_PN. Nibble D extends M by 5*256, so FE
+     * addresses M1534. The 0x0005/0x800A pair is OUT S10. */
+    static const uint16_t program[] = {
+        0x200A, 0x4400, 0x500B, 0xCDFE,
+        0x2DFE, 0x0005, 0x800A, 0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_s(10, true);
+    plc_set_x(0, true);
+
+    plc_exec_scan();
+
+    check("captured nibble-D coil writes M1534", 1, plc_get_m(1534));
+    check("captured nibble-D contact reads M1534", 1, plc_get_s(10));
+    check("captured FSM_PN forms have no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
+static void test_fsm_sr_transition_resets_source(void) {
+    /* Captured FSM_SR_NO_SC S10 -> S11 transition. M1434 is the compiler's
+     * automatic transition coil (nibble D, operand 0x9A). */
+    static const uint16_t program[] = {
+        0x200A, 0x4400, 0xCD9A,
+        0x2D9A, 0x0006, 0x800B,
+        0x2D9A, 0x0007, 0x800A,
+        0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_s(10, true);
+    plc_set_x(0, true);
+
+    plc_exec_scan();
+
+    check("FSM_SR transition sets destination S11", 1, plc_get_s(11));
+    check("FSM_SR transition resets source S10", 0, plc_get_s(10));
+    check("FSM_SR captured forms have no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
+static void test_captured_zrst_y_range(void) {
+    static const uint16_t program[] = {
+        0x2F00, 0x0060, 0x8400, 0x8005, 0x8403, 0x8005, 0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    for (uint16_t i = 0; i < 5; i++) plc_set_y(i, true);
+
+    plc_exec_scan();
+
+    check("captured ZRST clears Y0", 0, plc_get_y(0));
+    check("captured ZRST clears Y3", 0, plc_get_y(3));
+    check("captured ZRST leaves Y4 outside range", 1, plc_get_y(4));
+    check("captured ZRST has no unknown opcode", 0, plc_exec_unknown_count());
+}
+
+static void test_fsm_sr_sc_first_transition_and_action(void) {
+    /* Exact FSM_SR_SC forms for scan-control reset, initialization, S10->S11,
+     * and the S10/S11 action rungs. */
+    static const uint16_t program[] = {
+        0x2F00, 0xEDFF,                   /* M8000 -> RST M1535 */
+        0x2F02, 0x0006, 0x800A,           /* M8002 -> SET S10 */
+        0x200A, 0x4400, 0x5DFF, 0xCD91,   /* transition -> M1425 */
+        0x2D91, 0x0006, 0x800B,           /* SET S11 */
+        0x2D91, 0x0007, 0x800A,           /* RST S10 */
+        0x2D91, 0xDDFF,                   /* SET M1535 */
+        0x200A, 0x0060, 0x8400, 0x8005, 0x8403, 0x8005,
+        0x200B, 0xD500,                   /* S11 -> SET Y0 */
+        0x001C,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_set_m(M_INITIAL_PULSE, true);
+
+    plc_exec_scan();
+    check("FSM_SR_SC first scan initializes S10", 1, plc_get_s(10));
+    check("FSM_SR_SC initial S10 action clears Y0", 0, plc_get_y(0));
+
+    plc_set_m(M_INITIAL_PULSE, false);
+    plc_set_x(0, true);
+    plc_exec_scan();
+    check("FSM_SR_SC transition resets S10", 0, plc_get_s(10));
+    check("FSM_SR_SC transition sets S11", 1, plc_get_s(11));
+    check("FSM_SR_SC scan-control bit is set", 1, plc_get_m(1535));
+    check("FSM_SR_SC S11 action sets Y0 in transition scan", 1,
+          plc_get_y(0));
+    check("FSM_SR_SC captured forms have no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
+static void test_fsm_equ_comparison_and_moves(void) {
+    /* Captured FSM_EQU core: initialize CurrentState (D100), compare
+     * PreviousState (D101) with K1, then copy D100 to D101 at scan end. */
+    static const uint16_t program[] = {
+        0x2F02,
+        0x0028, 0x8001, 0x8000, 0x86C8, 0x8600, /* MOV K1 D100 */
+        0x01D0, 0x86CA, 0x8600, 0x8201, 0x8000, /* EQ D101 K1 */
+        0xCD87,                                  /* OUT M1415 */
+        0x2F00,
+        0x0028, 0x86C8, 0x8600, 0x86CA, 0x8600, /* MOV D100 D101 */
+        0x001C,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_set_m(M_INITIAL_PULSE, true);
+
+    plc_exec_scan();
+    check("FSM_EQU initial MOVE writes D100", 1, plc_get_d(100));
+    check("FSM_EQU comparison is false before previous-state copy", 0,
+          plc_get_m(1415));
+    check("FSM_EQU device MOVE copies D100 to D101", 1, plc_get_d(101));
+    check("FSM_EQU captured forms have no unknown opcode", 0,
+          plc_exec_unknown_count());
+
+    plc_set_m(M_INITIAL_PULSE, false);
+    plc_exec_scan();
+    check("FSM_EQU comparison is true on following scan", 1,
+          plc_get_m(1415));
+    check("FSM_EQU following scan has no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
+static void test_fsm_shl_captured_sftl(void) {
+    static const uint16_t program[] = {
+        0x2F00,
+        0x0056, 0x84F3, 0x800D, 0x840A, 0x8000,
+        0x8009, 0x8000, 0x8001, 0x8000,
+        0x001C,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_set_s(10, true);
+
+    plc_exec_scan();
+    check("FSM_SHL shifts S10 into S11", 1, plc_get_s(11));
+    check("FSM_SHL clears S10 from false source", 0, plc_get_s(10));
+
+    plc_set_m(1523, true);
+    plc_exec_scan();
+    check("FSM_SHL loads source M1523 into S10", 1, plc_get_s(10));
+    check("FSM_SHL advances prior state into S12", 1, plc_get_s(12));
+    check("FSM_SHL captured SFTL has no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
 int main(void) {
     test_inactive_step_is_gated();
     test_transfer_and_handover();
     test_multiple_state_merge();
     test_ladder_set_is_not_a_transfer();
+    test_fsm_stl_initial_pulse_sets_s10();
+    test_fsm_pn_automatic_m_and_out_s();
+    test_fsm_sr_transition_resets_source();
+    test_captured_zrst_y_range();
+    test_fsm_sr_sc_first_transition_and_action();
+    test_fsm_equ_comparison_and_moves();
+    test_fsm_shl_captured_sftl();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

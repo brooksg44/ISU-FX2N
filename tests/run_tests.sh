@@ -11,6 +11,10 @@ cd "$(dirname "$0")"
 
 CFLAGS="-Wall -Wextra -Werror -I../src"
 
+echo "== STOP to RUN non-retentive reset =="
+cc $CFLAGS test_plc_memory.c ../src/plc_memory.c -o test_plc_memory
+./test_plc_memory
+
 echo "== FX protocol address mapping =="
 cc $CFLAGS test_fx_addr.c ../src/fx_addr.c ../src/plc_memory.c \
     ../src/plc_program.c -o test_fx_addr

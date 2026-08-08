@@ -70,13 +70,13 @@ static void test_word_devices(void) {
 
     /* D registers are little-endian across two byte addresses. */
     plc_set_d(0, 0x1234);
-    check("D0 low byte  @0x1000", 0x34, fx_addr_read_byte(FX_ADDR_D));
-    check("D0 high byte @0x1001", 0x12, fx_addr_read_byte(FX_ADDR_D + 1));
+    check("D0 low byte  @0x4000", 0x34, fx_addr_read_byte(FX_ADDR_D));
+    check("D0 high byte @0x4001", 0x12, fx_addr_read_byte(FX_ADDR_D + 1));
 
-    /* The documented worked example: D123 sits at 0x10F6. */
+    /* The captured GX Works mapping: D123 sits at 0x40F6. */
     plc_set_d(123, 0xABCD);
-    check("D123 low  @0x10F6", 0xCD, fx_addr_read_byte(0x10F6));
-    check("D123 high @0x10F7", 0xAB, fx_addr_read_byte(0x10F7));
+    check("D123 low  @0x40F6", 0xCD, fx_addr_read_byte(0x40F6));
+    check("D123 high @0x40F7", 0xAB, fx_addr_read_byte(0x40F7));
 
     /* D8000 is a separate region below D0, not an extension of it. */
     plc_set_d(8000, 0x5678);

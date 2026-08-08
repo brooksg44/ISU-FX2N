@@ -30,6 +30,14 @@ uint8_t fx_monitor_read(uint16_t addr) {
 
 uint16_t fx_monitor_result_len(void) { return result_len; }
 
+uint8_t fx_monitor_list_byte(uint16_t offset) {
+    return offset < sizeof list ? list[offset] : 0;
+}
+
+uint8_t fx_monitor_result_byte(uint16_t offset) {
+    return offset < result_len ? result[offset] : 0;
+}
+
 void fx_monitor_sample(void) {
     uint16_t word_count = list[0];
     uint16_t bit_count = le16(&list[2]);

@@ -72,7 +72,7 @@ Special devices maintained by the runtime:
 | M8011–M8014 | 10 ms / 100 ms / 1 s / 1 min clock pulses |
 | D8000 | watchdog timer, ms |
 | D8001 / D8101 | PLC type and version — both `24100` |
-| D8002 / D8102 | memory capacity, 8 = 8K steps |
+| D8002 / D8102 | memory capacity, 16 = 16K steps |
 | D8010–D8012 | scan time current / minimum / maximum, 0.1 ms units |
 | D8030–D8032 | analog inputs AI0–AI2 |
 
@@ -200,12 +200,21 @@ the single most important idea to take from this source. See `plc_scan.h`.
 
 ## Known limitations
 
+- **Diagnostics are request-only.** Disconnect GX Works, open a serial
+  terminal, and send a bare `?`. Automatic idle dumps are disabled because GX
+  Works briefly closes and reopens the COM port between download and Monitor
+  Mode; output queued during that gap corrupts the next protocol handshake.
 - **Live ladder monitoring refreshes slowly.** GX Works polls the packed
   monitor buffer about once every 2.8 seconds over this serial connection, so
   X, Y, S and M changes animate correctly but are not immediate. The monitor
   list is stored separately and does not overwrite D registers.
 - **Remote RUN is not implemented.** A download issues remote STOP correctly;
   use I9 to return to RUN.
+- **Configurable latch ranges are not imported yet.** On STOP to RUN, Y, S,
+  general M, general D, T0-T245, and C0-C99 are cleared. Inputs, special
+  devices, T246-T255, and C100-C255 are retained. This gives `M8002` a clean
+  first scan for program initialization while preserving the fixed retentive
+  timer and counter ranges.
 - **Force** works for X, Y, M, S and M8000-range devices. T and C have not been
   located in the force address space and are ignored rather than guessed at.
 - Applied instructions beyond `MOV` are not implemented (see above).

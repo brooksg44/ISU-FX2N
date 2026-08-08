@@ -5,7 +5,8 @@
  * which the protocol reaches at byte address 0x8000 via the extended 'E'
  * command (observed: E 01 8000 40 = read 64 bytes from program address 0).
  *
- * An FX2N holds 8000 program steps of 16 bits each, so 16000 bytes. Note that
+ * This emulator exposes 16000 program steps of 16 bits each, so 32000 bytes.
+ * Note that
  * "step" and "instruction" are not the same thing: a basic instruction is one
  * step, but applied instructions occupy several.
  *
@@ -18,7 +19,7 @@
 
 #include <stdint.h>
 
-#define PLC_PROGRAM_STEPS 8000
+#define PLC_PROGRAM_STEPS 16000
 #define PLC_PROGRAM_BYTES (PLC_PROGRAM_STEPS * 2)
 
 /*
@@ -29,7 +30,7 @@
  *
  * The layout is not published in any source available to this project. What
  * matters here is that an erased 0xFF block declares maximum-sized comment
- * and file-register areas, which consume the whole 8000 steps - so the
+ * and file-register areas, which consume the available steps - so the
  * parameter area is cleared to zero (no comment area, no file registers)
  * while the program area keeps the erased 0xFF convention.
  */
@@ -40,7 +41,7 @@
  * be written to flash in one operation. Only PLC_PROGRAM_BYTES of it is
  * addressable as program; the tail is padding.
  */
-#define PLC_PROGRAM_STORE_BYTES 16128 /* 63 pages, >= PLC_PROGRAM_BYTES */
+#define PLC_PROGRAM_STORE_BYTES 32512 /* 127 pages; + header = 8 sectors */
 
 void plc_program_init(void);
 

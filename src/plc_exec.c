@@ -15,8 +15,8 @@
 /*
  * Device numbers above 255 do not fit the 8-bit operand. The low nibble
  * carries the high bits instead: OUT M300 encodes as opcode 0xC9 operand 0x2C,
- * i.e. nibble 9 = M + 256, 256 + 44 = 300. So M spans nibbles 8..B and S
- * spans 0..3. Only 8, 9 and 0 have been observed; the rest follow the pattern.
+ * i.e. nibble 9 = M + 256, 256 + 44 = 300. M spans nibbles 8..D and S spans
+ * 0..3. FSM_PN confirms nibble D: 0xCDFE is OUT M1534.
  */
 #define DEV_S 0x0 /* S0..S255, then 1/2/3 for +256/+512/+768 */
 
@@ -38,10 +38,15 @@
  * Members of the misc group (opcode 0x00), selected by the operand.
  * These are the instructions with no device of their own.
  */
+#define MISC_OUT_S 0x05 /* followed by one value word holding the S number */
 #define MISC_SET_S 0x06 /* followed by one value word holding the S number */
+#define MISC_RST_S 0x07 /* followed by one value word holding the S number */
 #define MISC_PLS_PREFIX 0x08
 #define MISC_END 0x0F
+#define MISC_FEND 0x1C /* program body terminator emitted before END */
 #define MISC_MOV 0x28 /* followed by two typed operand pairs */
+#define MISC_SFTL 0x56 /* source bit, destination bit, length, shift count */
+#define MISC_ZRST 0x60 /* followed by two typed bit-device operand pairs */
 
 /* Stack and block operations: opcode 0xFF, operand selects. */
 #define OPCODE_STACK 0xFF
@@ -57,7 +62,13 @@
 /* Typed operands of applied instructions, two words each, value carried in
  * the operand bytes low word first. */
 #define OPERAND_CONST 0x80
+#define OPERAND_COMPARE_CONST 0x82
+#define OPERAND_BIT 0x84
 #define OPERAND_D 0x86
+
+/* Structured Ladder EQ_E-2 prefix captured as bytes D0 01 in FSM_EQU. The
+ * program image is fetched little-endian, hence instruction word 0x01D0. */
+#define EQ_E_WORD 0x01D0
 
 /* Preset coils live in the misc group with a device nibble. */
 #define OPCODE_OUT_T 0x06
@@ -83,6 +94,30 @@ static uint16_t last_bad_opcode;
 
 static uint16_t fetch(uint32_t off) {
     return (uint16_t)(plc_program_read(off) | ((uint16_t)plc_program_read(off + 1) << 8));
+}
+
+static bool read_word_operand(uint16_t lo, uint16_t hi, uint16_t *value) {
+    uint8_t type = (uint8_t)(lo >> 8);
+    uint16_t raw = (uint16_t)((lo & 0xFF) | ((hi & 0xFF) << 8));
+    if (type == OPERAND_D) {
+        *value = plc_get_d((uint16_t)(raw / 2u));
+        return true;
+    }
+    if (type == OPERAND_CONST || type == OPERAND_COMPARE_CONST) {
+        *value = raw;
+        return true;
+    }
+    return false;
+}
+
+static bool read_bit_operand(uint16_t lo, uint16_t hi, uint8_t *dev,
+                             uint8_t *number) {
+    if ((lo >> 8) != OPERAND_BIT || (hi >> 8) != OPERAND_CONST) {
+        return false;
+    }
+    *number = (uint8_t)(lo & 0xFF);
+    *dev = (uint8_t)(hi & 0xFF);
+    return true;
 }
 
 static void stl_begin_step(stl_context_t *stl, uint16_t state, bool merge) {
@@ -121,7 +156,7 @@ static void stl_finish_scan(stl_context_t *stl) {
 /* Expands a device nibble and operand into a device number, applying the
  * 256-per-nibble extension for M and S. */
 static uint16_t device_number(uint8_t dev, uint8_t n) {
-    if (dev >= DEV_M && dev <= 0xB) {
+    if (dev >= DEV_M && dev <= 0xD) {
         return (uint16_t)(n + 256u * (dev - DEV_M));
     }
     if (dev <= 0x3) {
@@ -140,7 +175,7 @@ static bool read_bit(uint8_t dev, uint8_t n) {
         case DEV_C: return i < PLC_NUM_C ? plc_mem.c[i].done : false;
         default: break;
     }
-    if (dev >= DEV_M && dev <= 0xB) return plc_get_m(i);
+    if (dev >= DEV_M && dev <= 0xD) return plc_get_m(i);
     if (dev <= 0x3) return plc_get_s(i);
     return false;
 }
@@ -153,7 +188,7 @@ static void write_bit(uint8_t dev, uint8_t n, bool v) {
         case DEV_X: plc_set_x(i, v); return; /* the scan overwrites it next cycle */
         default: break;
     }
-    if (dev >= DEV_M && dev <= 0xB) plc_set_m(i, v);
+    if (dev >= DEV_M && dev <= 0xD) plc_set_m(i, v);
     else if (dev <= 0x3) plc_set_s(i, v);
 }
 
@@ -235,7 +270,7 @@ void plc_exec_scan(void) {
         }
 
         if (opcode == 0x00) {
-            if (operand == MISC_END) {
+            if (operand == MISC_END || operand == MISC_FEND) {
                 stl_finish_scan(&stl);
                 return;
             }
@@ -251,6 +286,85 @@ void plc_exec_scan(void) {
                     uint16_t state = (uint16_t)(v & 0xFF);
                     plc_set_s(state, true);
                     if (stl.in_stl) stl_queue_transfer(&stl);
+                }
+                continue;
+            }
+            if (operand == MISC_RST_S) {
+                /* Captured in FSM_SR_NO_SC: reset the named state when the
+                 * rung is true. Without this, each transition accumulated
+                 * another active S bit. */
+                uint16_t v = fetch(off);
+                off += 2;
+                if (result) plc_set_s((uint16_t)(v & 0xFF), false);
+                continue;
+            }
+            if (operand == MISC_OUT_S) {
+                /* Captured in FSM_PN: OUT S is followed by one constant word
+                 * containing the state number. */
+                uint16_t v = fetch(off);
+                off += 2;
+                plc_set_s((uint16_t)(v & 0xFF), result);
+                continue;
+            }
+            if (operand == MISC_ZRST) {
+                /* Captured as 0060 8400 8005 8403 8005 for ZRST Y0 Y3.
+                 * Each typed bit operand is (0x84,index), (0x80,device).
+                 * Consume the complete instruction even when malformed so
+                 * operand words are never executed as standalone opcodes. */
+                uint16_t a_lo = fetch(off), a_hi = fetch(off + 2);
+                uint16_t b_lo = fetch(off + 4), b_hi = fetch(off + 6);
+                off += 8;
+                if ((a_lo >> 8) == OPERAND_BIT &&
+                    (b_lo >> 8) == OPERAND_BIT &&
+                    (a_hi >> 8) == OPERAND_CONST &&
+                    (b_hi >> 8) == OPERAND_CONST &&
+                    (a_hi & 0xFF) == (b_hi & 0xFF)) {
+                    uint8_t bit_dev = (uint8_t)(a_hi & 0xFF);
+                    uint16_t first = (uint16_t)(a_lo & 0xFF);
+                    uint16_t last = (uint16_t)(b_lo & 0xFF);
+                    if (result && first <= last) {
+                        for (uint16_t i = first; i <= last; i++) {
+                            write_bit(bit_dev, (uint8_t)i, false);
+                        }
+                    }
+                } else {
+                    unknown_count++;
+                    last_bad_opcode = word;
+                }
+                continue;
+            }
+            if (operand == MISC_SFTL) {
+                /* FSM_SHL capture:
+                 *   0056 84F3 800D 840A 8000 8009 8000 8001 8000
+                 *   SFTL M1523 S10 K9 K1
+                 * Shift the destination range toward higher device numbers,
+                 * loading the source into its first bit. */
+                uint16_t s_lo = fetch(off), s_hi = fetch(off + 2);
+                uint16_t d_lo = fetch(off + 4), d_hi = fetch(off + 6);
+                uint16_t n_lo = fetch(off + 8), n_hi = fetch(off + 10);
+                uint16_t k_lo = fetch(off + 12), k_hi = fetch(off + 14);
+                off += 16;
+                uint8_t s_dev, s_num, d_dev, d_num;
+                uint16_t length, shifts;
+                if (!read_bit_operand(s_lo, s_hi, &s_dev, &s_num) ||
+                    !read_bit_operand(d_lo, d_hi, &d_dev, &d_num) ||
+                    !read_word_operand(n_lo, n_hi, &length) ||
+                    !read_word_operand(k_lo, k_hi, &shifts) ||
+                    length == 0 || shifts > length ||
+                    (uint32_t)d_num + length > 256u) {
+                    unknown_count++;
+                    last_bad_opcode = word;
+                    continue;
+                }
+                if (result) {
+                    bool source = read_bit(s_dev, s_num);
+                    for (uint16_t pass = 0; pass < shifts; pass++) {
+                        for (uint16_t i = length - 1; i > 0; i--) {
+                            write_bit(d_dev, (uint8_t)(d_num + i),
+                                      read_bit(d_dev, (uint8_t)(d_num + i - 1)));
+                        }
+                        write_bit(d_dev, d_num, pass == 0 ? source : false);
+                    }
                 }
                 continue;
             }
@@ -322,6 +436,25 @@ void plc_exec_scan(void) {
 
         if (opcode == OPCODE_CONST) {
             continue; /* stray constant - already consumed by its instruction */
+        }
+
+        /* FSM_EQU capture: D001 <typed lhs> <typed rhs>. EQ_E is a
+         * comparison contact/block and starts its network with the equality
+         * result; the following automatic M coil consumes that result. */
+        if (word == EQ_E_WORD) {
+            uint16_t a_lo = fetch(off), a_hi = fetch(off + 2);
+            uint16_t b_lo = fetch(off + 4), b_hi = fetch(off + 6);
+            off += 8;
+            uint16_t a, b;
+            if (read_word_operand(a_lo, a_hi, &a) &&
+                read_word_operand(b_lo, b_hi, &b)) {
+                result = a == b;
+            } else {
+                result = false;
+                unknown_count++;
+                last_bad_opcode = word;
+            }
+            continue;
         }
 
         switch (op) {

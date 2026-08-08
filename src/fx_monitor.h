@@ -16,4 +16,8 @@ uint8_t fx_monitor_read(uint16_t addr);
 void fx_monitor_sample(void);
 uint16_t fx_monitor_result_len(void);
 
+/* Diagnostic access to the raw GX Works monitor-list/result buffers. */
+uint8_t fx_monitor_list_byte(uint16_t offset);
+uint8_t fx_monitor_result_byte(uint16_t offset);
+
 #endif

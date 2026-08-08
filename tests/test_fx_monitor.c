@@ -62,6 +62,20 @@ int main(void) {
     write_list(stl2_list, sizeof stl2_list);
     check("watch list does not overwrite D512", 0xBEEF, plc_get_d(512));
 
+    /* Captured from FSM_EQU: GX Works encodes D100/D101 as byte addresses
+     * 0x40C8/0x40CA in the monitor list. */
+    static const uint8_t equ_words[] = {
+        0x02, 0x81, 0x00, 0x00, 0xC8, 0x40, 0xCA, 0x40,
+    };
+    write_list(equ_words, sizeof equ_words);
+    plc_set_d(100, 1);
+    plc_set_d(101, 2);
+    fx_monitor_sample();
+    check("FSM_EQU D100 monitor low", 1, fx_monitor_read(FX_MON_RESULT));
+    check("FSM_EQU D100 monitor high", 0, fx_monitor_read(FX_MON_RESULT + 1));
+    check("FSM_EQU D101 monitor low", 2, fx_monitor_read(FX_MON_RESULT + 2));
+    check("FSM_EQU D101 monitor high", 0, fx_monitor_read(FX_MON_RESULT + 3));
+
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

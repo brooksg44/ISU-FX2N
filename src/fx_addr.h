@@ -13,7 +13,7 @@
  *   0x0080  X       bit    0x0A00  C current (16-bit) word
  *   0x00A0  Y       bit    0x0C00  C current (32-bit) dword
  *   0x00C0  T con.  bit    0x0E00  D8000-D8255        word
- *   0x0100  M       bit    0x1000  D0-D7999           word
+ *   0x0100  M       bit    0x4000  D0-D7999           word
  *   0x01C0  C con.  bit
  *   0x01E0  M8000+  bit
  */
@@ -35,8 +35,8 @@
 #define FX_ADDR_C_CURRENT 0x0A00
 #define FX_ADDR_C_CURRENT32 0x0C00
 #define FX_ADDR_D_SPECIAL 0x0E00
-#define FX_ADDR_D 0x1000
-#define FX_ADDR_D_END 0x4E80 /* 0x1000 + 8000 registers * 2 bytes */
+#define FX_ADDR_D 0x4000
+#define FX_ADDR_D_END 0x7E80 /* 0x4000 + 8000 registers * 2 bytes */
 
 /* User program memory. Observed from GX Works: it reads 0x8000 with the
  * extended 'E' command before writing a program. */

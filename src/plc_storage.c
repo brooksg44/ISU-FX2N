@@ -10,7 +10,7 @@
 
 /*
  * Reserved region at the very end of flash, far from the program image. One
- * 256-byte header page followed by the program buffer, totalling exactly four
+ * 256-byte header page followed by the program buffer, totalling exactly eight
  * 4096-byte sectors.
  */
 #define STORAGE_HEADER_BYTES 256
