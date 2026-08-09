@@ -80,15 +80,30 @@ Special devices maintained by the runtime:
 
 ## Supported instructions
 
-Contacts and coils: `LD LDI AND ANI OR ORI OUT SET RST PLS`
-Stack and blocks: `MPS MRD MPP ANB ORB`
-Sequence: `STL RET END`
-Timers and counters: `OUT T`/`OUT C` with `K` presets
-Data: `MOV` with K constants and D registers
+- **Contacts:** `LD`, `LDI`, `AND`, `ANI`, `OR`, and `ORI`
+- **Coils:** `OUT`, `SET`, `RST`, and `PLS` for supported bit devices,
+  including the captured extended `OUT S`, `SET S`, and `RST S` forms
+- **Stack and blocks:** `MPS`, `MRD`, `MPP`, `ANB`, and `ORB`
+- **Sequence:** `STL`, `RET`, deferred STL state transfer, `END`, and the
+  compiled program-body terminator
+- **Timers and counters:** `OUT T`, `OUT C`, and Structured Ladder `OUT_C`
+  with constant presets; `RST T`, `RST C`, and the captured Structured Ladder
+  counter-reset form
+- **Data:** `MOV`/`MOVE_E` with integer constants and D registers
+- **Comparison:** the captured two-input `EQ_E` form with D-register and
+  integer-constant operands
+- **Range and shift:** `ZRST` bit ranges and captured `SFTL` bit-range shifts
+- **Decode:** captured `DECO C0 S9 K4` counter-to-one-hot-state decoding
+- **Drum sequencing:** captured `ABSD D300 C0 Y0 K4` absolute-drum tables
 
-Not yet implemented: `PLF`, `MC`/`MCR`, `INV`, comparison contacts
-(`LD=`, `LD>` …), and most applied instructions (`CMP`, `ZCP`, `ADD`, `SUB`,
-`MUL`, `DIV`, `INC`, `DEC`, shifts, `ZRST`).
+These forms have been exercised by the GX Works teaching programs listed in
+[`TestedPrg.md`](TestedPrg.md). Support is based on the exact instruction words
+observed in downloads; similarly named variants with different operand types
+may still require additional decoding.
+
+Not yet implemented includes `PLF`, `MC`/`MCR`, `INV`, general comparison
+contacts (`LD=`, `LD>` and related forms), `CMP`, `ZCP`, `ADD`, `SUB`, `MUL`,
+`DIV`, `INC`, `DEC`, and IEC `CTU` function-block execution.
 
 An unimplemented instruction does not fail silently — it is counted and
 reported in the diagnostic dump, naming the opcode.

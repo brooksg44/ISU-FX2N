@@ -42,11 +42,14 @@
 #define MISC_SET_S 0x06 /* followed by one value word holding the S number */
 #define MISC_RST_S 0x07 /* followed by one value word holding the S number */
 #define MISC_PLS_PREFIX 0x08
+#define MISC_RST_C 0x0C /* Structured Ladder counter reset + counter word */
 #define MISC_END 0x0F
 #define MISC_FEND 0x1C /* program body terminator emitted before END */
 #define MISC_MOV 0x28 /* followed by two typed operand pairs */
 #define MISC_SFTL 0x56 /* source bit, destination bit, length, shift count */
 #define MISC_ZRST 0x60 /* followed by two typed bit-device operand pairs */
+#define MISC_DECO 0x62 /* source value, first destination bit, source width */
+#define MISC_ABSD 0x8C /* table, counter, first output, output count */
 
 /* Stack and block operations: opcode 0xFF, operand selects. */
 #define OPCODE_STACK 0xFF
@@ -69,6 +72,7 @@
 /* Structured Ladder EQ_E-2 prefix captured as bytes D0 01 in FSM_EQU. The
  * program image is fetched little-endian, hence instruction word 0x01D0. */
 #define EQ_E_WORD 0x01D0
+#define OUT_C_ENABLE_WORD 0x01CA
 
 /* Preset coils live in the misc group with a device nibble. */
 #define OPCODE_OUT_T 0x06
@@ -278,6 +282,19 @@ void plc_exec_scan(void) {
                 pls_pending = true;
                 continue;
             }
+            if (operand == MISC_RST_C) {
+                /* FSM_DRUM: 000C 8E00 resets C0 when the incoming rung
+                 * (the C0 done contact in the capture) is true. */
+                uint16_t target = fetch(off);
+                off += 2;
+                if ((target >> 8) == 0x8E) {
+                    if (result) plc_counter_reset((uint8_t)(target & 0xFF));
+                } else {
+                    unknown_count++;
+                    last_bad_opcode = word;
+                }
+                continue;
+            }
             if (operand == MISC_SET_S) {
                 /* One value word follows carrying the state number. */
                 uint16_t v = fetch(off);
@@ -368,6 +385,86 @@ void plc_exec_scan(void) {
                 }
                 continue;
             }
+            if (operand == MISC_ABSD) {
+                /* Absolute drum sequencer (FNC 62), captured as:
+                 *   008C 8658 8602 8600 8400 8400 8005 8004 8000
+                 *   ABSD D300 C0 Y0 K4
+                 * D300/D301 are Y0's ON/OFF thresholds, followed by one
+                 * consecutive pair for each output. */
+                uint16_t table_lo = fetch(off), table_hi = fetch(off + 2);
+                uint16_t ctr_lo = fetch(off + 4), ctr_hi = fetch(off + 6);
+                uint16_t dst_lo = fetch(off + 8), dst_hi = fetch(off + 10);
+                uint16_t count_lo = fetch(off + 12), count_hi = fetch(off + 14);
+                off += 16;
+
+                uint8_t dst_dev, dst_num;
+                uint16_t count;
+                uint16_t table_raw = (uint16_t)((table_lo & 0xFF) |
+                                                ((table_hi & 0xFF) << 8));
+                uint16_t table = (uint16_t)(table_raw / 2u);
+                bool valid = (table_lo >> 8) == OPERAND_D &&
+                             (table_hi >> 8) == OPERAND_D &&
+                             (ctr_lo >> 8) == OPERAND_D &&
+                             (ctr_hi >> 8) == OPERAND_BIT &&
+                             (ctr_hi & 0xFF) == 0 &&
+                             read_bit_operand(dst_lo, dst_hi, &dst_dev, &dst_num) &&
+                             read_word_operand(count_lo, count_hi, &count) &&
+                             count <= 64 &&
+                             (uint32_t)table + 2u * count <= PLC_NUM_D &&
+                             (uint32_t)dst_num + count <= 256u;
+                uint16_t counter = (uint16_t)(ctr_lo & 0xFF);
+                if (!valid || counter >= PLC_NUM_C) {
+                    unknown_count++;
+                    last_bad_opcode = word;
+                    continue;
+                }
+                if (result) {
+                    int32_t current = plc_mem.c[counter].current;
+                    for (uint16_t i = 0; i < count; i++) {
+                        uint16_t on_at = plc_get_d((uint16_t)(table + 2u * i));
+                        uint16_t off_at = plc_get_d((uint16_t)(table + 2u * i + 1u));
+                        write_bit(dst_dev, (uint8_t)(dst_num + i),
+                                  current >= on_at && current < off_at);
+                    }
+                }
+                continue;
+            }
+            if (operand == MISC_DECO) {
+                /* FSM_Counter_Decode capture:
+                 *   0062 8600 8400 8409 8000 8004 8000
+                 *   DECO C0 S9 K4
+                 * A width of n source bits drives 2^n consecutive one-hot
+                 * destination bits. */
+                uint16_t src_lo = fetch(off), src_hi = fetch(off + 2);
+                uint16_t dst_lo = fetch(off + 4), dst_hi = fetch(off + 6);
+                uint16_t n_lo = fetch(off + 8), n_hi = fetch(off + 10);
+                off += 12;
+
+                uint8_t dst_dev, dst_num;
+                uint16_t width;
+                bool source_is_counter = (src_lo >> 8) == OPERAND_D &&
+                                         (src_hi >> 8) == OPERAND_BIT &&
+                                         (src_hi & 0xFF) == 0;
+                uint16_t counter = (uint16_t)(src_lo & 0xFF);
+                bool valid = source_is_counter && counter < PLC_NUM_C &&
+                             read_bit_operand(dst_lo, dst_hi, &dst_dev, &dst_num) &&
+                             read_word_operand(n_lo, n_hi, &width) &&
+                             width >= 1 && width <= 8;
+                uint16_t destinations = valid ? (uint16_t)(1u << width) : 0;
+                if (!valid || (uint32_t)dst_num + destinations > 256u) {
+                    unknown_count++;
+                    last_bad_opcode = word;
+                    continue;
+                }
+                if (result) {
+                    int32_t selected = plc_mem.c[counter].current;
+                    for (uint16_t i = 0; i < destinations; i++) {
+                        write_bit(dst_dev, (uint8_t)(dst_num + i),
+                                  selected >= 0 && (uint32_t)selected == i);
+                    }
+                }
+                continue;
+            }
             if (operand == MISC_MOV) {
                 /* Two typed operand pairs: source then destination. A D
                  * operand carries a byte address, hence the halving. */
@@ -449,6 +546,21 @@ void plc_exec_scan(void) {
             if (read_word_operand(a_lo, a_hi, &a) &&
                 read_word_operand(b_lo, b_hi, &b)) {
                 result = a == b;
+            } else {
+                result = false;
+                unknown_count++;
+                last_bad_opcode = word;
+            }
+            continue;
+        }
+
+        if (word == OUT_C_ENABLE_WORD) {
+            /* FSM_DRUM OUT_C wrapper: 01CA 8400, then the normal
+             * 0E00 8009 8000 counter coil and preset. */
+            uint16_t enable = fetch(off);
+            off += 2;
+            if ((enable >> 8) == 0x84) {
+                result = read_bit(DEV_X, (uint8_t)(enable & 0xFF));
             } else {
                 result = false;
                 unknown_count++;

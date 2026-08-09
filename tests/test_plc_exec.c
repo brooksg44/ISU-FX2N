@@ -25,9 +25,21 @@ void plc_timer_drive(uint16_t idx, uint16_t preset, bool enable) {
 }
 void plc_timer_reset(uint16_t idx) { (void)idx; }
 void plc_counter_drive(uint16_t idx, int32_t preset, bool enable) {
-    (void)idx; (void)preset; (void)enable;
+    if (idx >= PLC_NUM_C) return;
+    plc_counter_t *c = &plc_mem.c[idx];
+    c->preset = preset;
+    bool rising = enable && !c->last_in;
+    c->last_in = enable;
+    if (!rising) return;
+    if (c->current < preset) c->current++;
+    if (c->current >= preset) c->done = true;
 }
-void plc_counter_reset(uint16_t idx) { (void)idx; }
+void plc_counter_reset(uint16_t idx) {
+    if (idx >= PLC_NUM_C) return;
+    plc_mem.c[idx].current = 0;
+    plc_mem.c[idx].done = false;
+    plc_mem.c[idx].last_in = false;
+}
 
 static void check(const char *what, long expected, long actual) {
     checks++;
@@ -291,6 +303,77 @@ static void test_fsm_shl_captured_sftl(void) {
           plc_exec_unknown_count());
 }
 
+static void test_fsm_drum_absd_and_out_c(void) {
+    static const uint16_t program[] = {
+        0x2F00,
+        0x0028, 0x8002, 0x8000, 0x8658, 0x8602,
+        0x0028, 0x8009, 0x8000, 0x865A, 0x8602,
+        0x0028, 0x8003, 0x8000, 0x865C, 0x8602,
+        0x0028, 0x8008, 0x8000, 0x865E, 0x8602,
+        0x0028, 0x8004, 0x8000, 0x8660, 0x8602,
+        0x0028, 0x8007, 0x8000, 0x8662, 0x8602,
+        0x0028, 0x8005, 0x8000, 0x8664, 0x8602,
+        0x0028, 0x8006, 0x8000, 0x8666, 0x8602,
+        0x2400, 0x6401,
+        0x008C, 0x8658, 0x8602, 0x8600, 0x8400,
+        0x8400, 0x8005, 0x8004, 0x8000,
+        0x2E00, 0x000C, 0x8E00,
+        0x01CA, 0x8400, 0x0E00, 0x8009, 0x8000,
+        0x001C,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_mem.c[0].current = 2;
+    plc_set_x(0, true);
+
+    plc_exec_scan();
+    check("FSM_DRUM Initialize writes D300", 2, plc_get_d(300));
+    check("FSM_DRUM Initialize writes D307", 6, plc_get_d(307));
+    check("FSM_DRUM ABSD turns Y0 on at count 2", 1, plc_get_y(0));
+    check("FSM_DRUM ABSD leaves Y1 off before count 3", 0, plc_get_y(1));
+    check("FSM_DRUM OUT_C applies preset K9", 9,
+          (unsigned)plc_mem.c[0].preset);
+    check("FSM_DRUM OUT_C drives its input", 1,
+          (unsigned)plc_mem.c[0].last_in);
+    check("FSM_DRUM OUT_C increments C0", 3, (unsigned)plc_mem.c[0].current);
+    check("FSM_DRUM captured forms have no unknown opcode", 0,
+          plc_exec_unknown_count());
+
+    plc_set_x(0, false);
+    plc_exec_scan();
+    plc_mem.c[0].current = 5;
+    plc_mem.c[0].last_in = false;
+    plc_set_x(0, true);
+    plc_exec_scan();
+    check("FSM_DRUM ABSD has all four outputs on at count 5", 0x0F,
+          plc_get_y(0) | (plc_get_y(1) << 1) | (plc_get_y(2) << 2) |
+              (plc_get_y(3) << 3));
+}
+
+static void test_fsm_counter_decode_captured_deco(void) {
+    static const uint16_t program[] = {
+        0x2F00,
+        0x0062, 0x8600, 0x8400, 0x8409, 0x8000, 0x8004, 0x8000,
+        0x001C,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_mem.c[0].current = 3;
+
+    plc_exec_scan();
+    check("FSM_Counter_Decode C0=3 selects S12", 1, plc_get_s(12));
+    check("FSM_Counter_Decode leaves adjacent S11 off", 0, plc_get_s(11));
+
+    plc_mem.c[0].current = 7;
+    plc_exec_scan();
+    check("FSM_Counter_Decode clears previous S12", 0, plc_get_s(12));
+    check("FSM_Counter_Decode C0=7 selects S16", 1, plc_get_s(16));
+    check("FSM_Counter_Decode captured DECO has no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
 int main(void) {
     test_inactive_step_is_gated();
     test_transfer_and_handover();
@@ -303,6 +386,8 @@ int main(void) {
     test_fsm_sr_sc_first_transition_and_action();
     test_fsm_equ_comparison_and_moves();
     test_fsm_shl_captured_sftl();
+    test_fsm_drum_absd_and_out_c();
+    test_fsm_counter_decode_captured_deco();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

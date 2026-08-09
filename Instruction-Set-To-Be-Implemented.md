@@ -158,6 +158,18 @@ numbers and loads M1523 into S10. Program capacity is now 16000 steps, backed
 by a 32000-byte instruction image and eight flash sectors of persistent
 storage.
 
+The `FSM_DRUM` capture established `ABSD` as `0x008C` followed by its D-table,
+counter, first-output, and output-count operands. The observed
+`ABSD D300 C0 Y0 K4` uses D300-D307 as four ON/OFF threshold pairs. The same
+capture identifies the Structured Ladder counter reset as `0x000C` plus a
+counter word, and the `OUT_C` enable wrapper as `0x01CA` plus its X input,
+followed by the normal counter coil and constant preset.
+
+The `FSM_Counter_Decode` capture established `DECO` as `0x0062` followed by
+typed source, first-destination, and source-width operands. The observed
+`DECO C0 S9 K4` reads the low four bits of C0 and selects one of 16 consecutive
+state bits S9-S24 while clearing the other decoded destinations.
+
 ## Which UF2 To Use for DMS Captures
 
 Use the current `build/ISU-FX2N.uf2` for DMS captures of GX Works downloads.

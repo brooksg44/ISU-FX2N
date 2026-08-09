@@ -118,9 +118,37 @@ from compiling, downloading, executing, or being monitored.
 - **Physical behavior:** X0 turns on PL1 through PL4 in order; X1 turns them
   off in reverse order on the Pico trainer.
 
+### `FSM_DRUM`
+
+- **Project:** `projects/4LightsSeqLDv2.gxw`
+- **Validated:** 2026-08-08
+- **Status:** Working
+- **CPU target:** `FX2N/FX2NC`
+- **Initialization:** Structured Text initialization correctly loads the
+  D300-D307 absolute-drum threshold table.
+- **Drum operation:** Captured `ABSD D300 C0 Y0 K4`, counter reset, and
+  `OUT_C C0 K9` forms execute correctly.
+- **Monitoring:** Counter, table, and output values match the GX Works 2
+  simulator.
+- **Physical behavior:** The absolute-drum light sequence differs from the
+  other FSM examples by design and matches the GX Works 2 simulator on the
+  Pico trainer.
+
+### `FSM_Counter_Decode`
+
+- **Project:** `projects/4LightsSeqLDv2.gxw`
+- **Validated:** 2026-08-08
+- **Status:** Working
+- **CPU target:** `FX2N/FX2NC`
+- **Decode operation:** Captured `DECO C0 S9 K4` correctly converts the C0
+  value into a one-hot state across S9-S24.
+- **Counter behavior:** The captured counter coil and reset forms advance and
+  recycle the state count correctly.
+- **Monitoring:** GX Works counter, state, and output monitoring validated.
+- **Physical behavior:** The four-light sequence matches the GX Works 2
+  simulator on the Pico trainer.
+
 ## Programs awaiting validation
 
 - `FSM_Counter`
-- `FSM_Counter_Decode`
 - `FSM_Counter_D`
-- `FSM_DRUM`
