@@ -1,5 +1,7 @@
 # ISU-FX2N
 
+Student-ready firmware: [download `ISU-FX2N.uf2`](build/ISU-FX2N.uf2).
+
 An open-source, FX2N-compatible PLC for the Raspberry Pi Pico WH, programmable
 from **Mitsubishi GX Works 2** or GX Developer.
 

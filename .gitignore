@@ -1,5 +1,7 @@
-# CMake / Ninja build tree, including the fetched picotool
-build/
+# CMake / Ninja build tree, including the fetched picotool. Keep the release
+# firmware image in Git so students can download it without building locally.
+build/*
+!build/ISU-FX2N.uf2
 
 # Compiled host test binaries
 tests/test_fx_addr
