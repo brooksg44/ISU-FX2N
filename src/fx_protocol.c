@@ -333,28 +333,27 @@ static void handle_frame(void) {
                 return;
             }
 
-            /*
-             * Extended force, a different shape from the read/write forms:
+            /* Extended force, a different shape from read/write forms. The
+             * address is little-endian: "240E" is special relay M8036.
+             * GX Works Remote Operation uses the standard FX relay sequence:
              *
-             *   02 'E' '7' "760E" 03 "61"   force ON
-             *   02 'E' '8' "760E" 03 "62"   force OFF
+             *   RUN:  M8037 OFF, M8035 ON, M8036 ON
+             *   STOP: M8037 ON
              *
-             * Sent as an on/off pair after the remote stop, so this is very
-             * likely how GX Works pulses a mode-control relay.
-             *
-             * The address encoding is NOT understood: 0x760E does not land on
-             * any device in our map under either byte order, so acting on it
-             * would mean writing somewhere arbitrary on a guess. It is
-             * acknowledged so the download can proceed, and deliberately not
-             * applied - see the note to the user about capturing a force of a
-             * known device (Y0) to decode this properly.
-             */
+             * The relay image is updated as for any other force. M8036 and
+             * M8037 additionally control the emulator scan mode. */
             if (etx_pos == 7 && (rx[2] == '7' || rx[2] == '8')) {
                 uint32_t raw;
                 if (parse_hex(&rx[3], 4, &raw)) {
                     /* Sent little-endian: "2C01" means 0x012C. */
                     uint16_t a = (uint16_t)(((raw & 0xFF) << 8) | (raw >> 8));
-                    fx_addr_force(a, rx[2] == '7');
+                    bool on = rx[2] == '7';
+                    fx_addr_force(a, on);
+                    if (on && a == FX_FORCE_MS_BASE + 36u) {
+                        plc_scan_set_mode(PLC_MODE_RUN);   /* M8036 */
+                    } else if (on && a == FX_FORCE_MS_BASE + 37u) {
+                        plc_scan_set_mode(PLC_MODE_STOP);  /* M8037 */
+                    }
                 }
                 stat_frames_ok++;
                 send_simple(ACK);

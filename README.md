@@ -76,6 +76,11 @@ Special devices maintained by the runtime:
 | D8010–D8012 | scan time current / minimum / maximum, 0.1 ms units |
 | D8030–D8032 | analog inputs AI0–AI2 |
 
+GX Works 2 **Online → Remote Operation** controls RUN/STOP using the captured
+FX special-relay sequence (`M8035`–`M8037`). All ten physical trainer inputs
+remain available to the user program; in particular, I9 maps to FX device X11
+and is not reserved for local RUN/STOP control.
+
 ---
 
 ## Supported instructions
@@ -90,7 +95,9 @@ Special devices maintained by the runtime:
   compiled program-body terminator
 - **Timers and counters:** `OUT T`, `OUT C`, and Structured Ladder `OUT_C`
   with constant presets; `RST T`, `RST C`, and the captured Structured Ladder
-  counter-reset form; compiler-inlined `CTU` execution used by `FSM_Counter`
+  counter-reset form; compiler-inlined `CTU` execution used by `FSM_Counter`;
+  and captured IEC `TON`, `TON_E`, `TOF`, `TOF_E`, `TP`, and `TP_E` forms
+  with `TIME` conversion, D-register presets, `Q`, and `ET`
 - **Data movement:** `MOV`/`MOVE_E`, `BMOV`, and `FMOV`
 - **Comparison:** `CMP`; signed 16-bit `LD`, `AND`, and `OR` forms of `=`, `>`,
   `<`, `<>`, `<=`, and `>=`; plus compatible captured `EQ_E`/`NE_E` forms

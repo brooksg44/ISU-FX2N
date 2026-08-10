@@ -50,27 +50,6 @@ static void demo_ladder(void) {
 }
 
 /*
- * Local RUN/STOP on I9.
- *
- * A download issues a remote STOP ('B'), but the matching remote RUN command
- * has not been observed yet, so a downloaded program would otherwise stay
- * stopped until the next power cycle. I9 toggles the mode as a stand-in.
- *
- * This is close to what a real FX does anyway - it has a physical RUN/STOP
- * switch, which the trainer has no pin for - so this may well become the
- * permanent behaviour on a reserve pin rather than scaffolding.
- */
-static void poll_run_stop_button(void) {
-    static bool last = false;
-    bool now = plc_get_x(9);
-    if (now && !last) {
-        plc_scan_set_mode(plc_scan_get_mode() == PLC_MODE_RUN ? PLC_MODE_STOP
-                                                              : PLC_MODE_RUN);
-    }
-    last = now;
-}
-
-/*
  * sts1 (GPIO3) is the communications diagnostic. USB CDC carries the protocol
  * itself, so there is no terminal to print to - this LED is how the two
  * failure modes are told apart with no extra hardware:
@@ -131,7 +110,6 @@ int main(void) {
 
         board_status_led(0, plc_scan_get_mode() == PLC_MODE_RUN);
         update_comms_led();
-        poll_run_stop_button();
         fx_protocol_idle_dump();
         plc_storage_task();
     }

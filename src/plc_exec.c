@@ -50,6 +50,7 @@
 #define MISC_END 0x0F
 #define MISC_FEND 0x1C /* program body terminator emitted before END */
 #define MISC_MOV 0x28 /* followed by two typed operand pairs */
+#define MISC_MOV_TIME 0x29 /* captured 32-bit TIME move used by IEC FBs */
 #define MISC_CMP 0x24
 #define MISC_BMOV 0x2E
 #define MISC_FMOV 0x30
@@ -57,6 +58,7 @@
 #define MISC_SUB 0x3A
 #define MISC_MUL 0x3C
 #define MISC_DIV 0x3E
+#define MISC_DDIV_TIME 0x3F /* captured 32-bit TIME scaling used by IEC timers */
 #define MISC_INC 0x40
 #define MISC_DEC 0x42
 #define MISC_WAND 0x44
@@ -155,7 +157,13 @@ static bool read_word_operand(uint16_t lo, uint16_t hi, uint16_t *value) {
     uint8_t type = (uint8_t)(lo >> 8);
     uint16_t raw = (uint16_t)((lo & 0xFF) | ((hi & 0xFF) << 8));
     if (type == OPERAND_D) {
-        *value = plc_get_d((uint16_t)(raw / 2u));
+        /* IEC timer FBs encode TN199 as 868E 8201: the 0x82 high type
+         * distinguishes the timer-current word from ordinary D199. */
+        if ((hi >> 8) == OPERAND_COMPARE_CONST && raw / 2u < PLC_NUM_T) {
+            *value = plc_mem.t[raw / 2u].current;
+        } else {
+            *value = plc_get_d((uint16_t)(raw / 2u));
+        }
         return true;
     }
     if (type == OPERAND_CONST || type == OPERAND_COMPARE_CONST) {
@@ -324,6 +332,50 @@ static bool execute_applied(uint16_t instruction, uint32_t *off, bool enabled) {
     bool valid = true;
 
     switch (instruction) {
+        case MISC_MOV_TIME:
+        {
+            uint16_t s0_lo = fetch(*off), s0_hi = fetch(*off + 2);
+            uint16_t s1_lo = fetch(*off + 4), s1_hi = fetch(*off + 6);
+            uint16_t d0_lo = fetch(*off + 8), d0_hi = fetch(*off + 10);
+            uint16_t d1_lo = fetch(*off + 12), d1_hi = fetch(*off + 14);
+            uint16_t value_lo, value_hi, padding;
+            *off += 16;
+            valid = read_word_operand(s0_lo, s0_hi, &value_lo) &&
+                    read_word_operand(s1_lo, s1_hi, &value_hi) &&
+                    word_operand_register(d0_lo, d0_hi, &dst) &&
+                    read_word_operand(d1_lo, d1_hi, &padding) && padding == 0 &&
+                    dst + 1u < PLC_NUM_D;
+            if (valid && enabled) {
+                plc_set_d32(dst, (uint32_t)value_lo | ((uint32_t)value_hi << 16));
+            }
+            break;
+        }
+        case MISC_DDIV_TIME:
+        {
+            uint16_t s0_lo = fetch(*off), s0_hi = fetch(*off + 2);
+            uint16_t s1_lo = fetch(*off + 4), s1_hi = fetch(*off + 6);
+            uint16_t b0_lo = fetch(*off + 8), b0_hi = fetch(*off + 10);
+            uint16_t b1_lo = fetch(*off + 12), b1_hi = fetch(*off + 14);
+            uint16_t d0_lo = fetch(*off + 16), d0_hi = fetch(*off + 18);
+            uint16_t d1_lo = fetch(*off + 20), d1_hi = fetch(*off + 22);
+            uint16_t a_lo, a_hi, b_lo, b_hi;
+            *off += 24;
+            valid = read_word_operand(s0_lo, s0_hi, &a_lo) &&
+                    read_word_operand(s1_lo, s1_hi, &a_hi) &&
+                    read_word_operand(b0_lo, b0_hi, &b_lo) &&
+                    read_word_operand(b1_lo, b1_hi, &b_hi) &&
+                    word_operand_register(d0_lo, d0_hi, &dst) &&
+                    read_word_operand(d1_lo, d1_hi, &n) && n == 0 &&
+                    dst + 3u < PLC_NUM_D;
+            uint32_t dividend = (uint32_t)a_lo | ((uint32_t)a_hi << 16);
+            uint32_t divisor = (uint32_t)b_lo | ((uint32_t)b_hi << 16);
+            if (divisor == 0) valid = false;
+            if (valid && enabled) {
+                plc_set_d32(dst, dividend / divisor);
+                plc_set_d32((uint16_t)(dst + 2u), dividend % divisor);
+            }
+            break;
+        }
         case MISC_CMP:
             valid = fetch_word_value(off, &a) && fetch_word_value(off, &b) &&
                     fetch_bit_device(off, &ddev, &dnum) && dnum <= 253;
@@ -565,13 +617,18 @@ void plc_exec_scan(void) {
             uint16_t lo = fetch(off);
             uint16_t hi = fetch(off + 2);
             off += 4;
-            uint32_t preset = (uint32_t)(lo & 0xFF) | ((uint32_t)(hi & 0xFF) << 8);
+            uint16_t preset;
+            if (!read_word_operand(lo, hi, &preset)) {
+                bad_instruction(word);
+                continue;
+            }
 
             if (opcode == OPCODE_OUT_T) {
-                plc_timer_drive(operand, (uint16_t)preset, result);
+                plc_timer_drive(operand, preset, result);
             } else {
                 plc_counter_drive(operand, (int32_t)preset, result);
             }
+            block_sp = 0;
             continue;
         }
 
@@ -613,12 +670,15 @@ void plc_exec_scan(void) {
                 continue;
             }
             if (operand == MISC_RST_C) {
-                /* FSM_DRUM: 000C 8E00 resets C0 when the incoming rung
-                 * (the C0 done contact in the capture) is true. */
+                /* Captured structured reset forms:
+                 *   000C 8E00  RESET C0
+                 *   000C 86C6  RESET T198 (IEC TOF instance) */
                 uint16_t target = fetch(off);
                 off += 2;
                 if ((target >> 8) == 0x8E) {
                     if (result) plc_counter_reset((uint8_t)(target & 0xFF));
+                } else if ((target >> 8) == OPERAND_D) {
+                    if (result) plc_timer_reset((uint8_t)(target & 0xFF));
                 } else {
                     unknown_count++;
                     last_bad_opcode = word;
@@ -947,6 +1007,7 @@ void plc_exec_scan(void) {
                 } else {
                     write_bit(dev, operand, result);
                 }
+                block_sp = 0;
                 break;
 
             case OP_SET:
@@ -954,6 +1015,7 @@ void plc_exec_scan(void) {
                     write_bit(dev, operand, true);
                     if (stl.in_stl && dev <= 0x3) stl_queue_transfer(&stl);
                 }
+                block_sp = 0;
                 break;
 
             case OP_RST:
@@ -962,6 +1024,7 @@ void plc_exec_scan(void) {
                     if (dev == DEV_T) plc_timer_reset(operand);
                     if (dev == DEV_C) plc_counter_reset(operand);
                 }
+                block_sp = 0;
                 break;
 
             case OP_PLS:
@@ -978,6 +1041,7 @@ void plc_exec_scan(void) {
                     unknown_count++;
                     last_bad_opcode = word;
                 }
+                block_sp = 0;
                 break;
 
             default:

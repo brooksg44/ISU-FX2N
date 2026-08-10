@@ -18,12 +18,19 @@
 
 static int failures;
 static int checks;
+static uint16_t last_timer_idx;
+static uint16_t last_timer_preset;
+static bool last_timer_enable;
+static uint16_t last_timer_reset;
 
 /* plc_exec links against these scan services; STL tests do not use time. */
 void plc_timer_drive(uint16_t idx, uint16_t preset, bool enable) {
-    (void)idx; (void)preset; (void)enable;
+    last_timer_idx = idx;
+    last_timer_preset = preset;
+    last_timer_enable = enable;
+    if (idx < PLC_NUM_T) plc_mem.t[idx].preset = preset;
 }
-void plc_timer_reset(uint16_t idx) { (void)idx; }
+void plc_timer_reset(uint16_t idx) { last_timer_reset = idx; }
 void plc_counter_drive(uint16_t idx, int32_t preset, bool enable) {
     if (idx >= PLC_NUM_C) return;
     plc_counter_t *c = &plc_mem.c[idx];
@@ -514,6 +521,75 @@ static void test_fsm_counter_structured_operands_and_bon(void) {
           plc_exec_unknown_count());
 }
 
+static void test_orb_stack_clears_between_rungs(void) {
+    /* IntroSFC_LD emits many transition rungs before the Steps latch:
+     *   M32 OR M21 OR (M1 AND NOT M22) -> M1
+     * Completed coils must discard prior LD block entries, otherwise sixteen
+     * earlier rungs fill the stack and ORB loses the M21 first-scan pulse. */
+    static const uint16_t program[] = {
+        0x2800, 0xC828, 0x2800, 0xC829, 0x2800, 0xC82A,
+        0x2800, 0xC82B, 0x2800, 0xC82C, 0x2800, 0xC82D,
+        0x2800, 0xC82E, 0x2800, 0xC82F, 0x2800, 0xC830,
+        0x2800, 0xC831, 0x2800, 0xC832, 0x2800, 0xC833,
+        0x2800, 0xC834, 0x2800, 0xC835, 0x2800, 0xC836,
+        0x2800, 0xC837, 0x2820, 0x6815, 0x2801, 0x5816,
+        0xFFF9, 0xC801, 0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(21, true); /* tS1 first-scan transition pulse */
+
+    plc_exec_scan();
+
+    check("ORB latches st1 after many completed rungs", 1, plc_get_m(1));
+    check("ORB rung sequence has no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
+static void test_iec_timer_compiler_forms(void) {
+    /* Captured TON/TOF/TP and TON_E/TOF_E/TP_E share this generated TIME
+     * conversion; the _E variants only add an EN/ENO gate around it:
+     * DDIV D0:1 K100 D2:3, followed by OUT T199 D2.  TN199 is then
+     * multiplied by 100 to publish ET in milliseconds. */
+    static const uint16_t program[] = {
+        0x2F00,
+        0x0029,
+        0x80D0, 0x8007, 0x8000, 0x8000, /* TIME#2000ms */
+        0x8600, 0x8600, 0x8000, 0x8000, /* D0:D1 PT */
+        0x003F,
+        0x8600, 0x8600, 0x8000, 0x8000, /* D0:D1 */
+        0x8064, 0x8000, 0x8000, 0x8000, /* K100 */
+        0x8604, 0x8600, 0x8000, 0x8000, /* D2:D3 quotient */
+        0x06C7, 0x8604, 0x8600,         /* OUT T199 D2 */
+        0x003C, 0x868E, 0x8201,         /* TN199 */
+                0x8064, 0x8000,         /* K100 */
+                0x860C, 0x8600,         /* D6 */
+        0x2800, 0x000C, 0x86C6,         /* structured RESET T198 */
+        0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_mem.t[199].current = 7;
+    last_timer_idx = last_timer_preset = 0;
+    last_timer_enable = false;
+    last_timer_reset = 0;
+    plc_set_m(0, true);
+
+    plc_exec_scan();
+
+    check("IEC TIME move stores PT milliseconds", 2000, plc_get_d32(0));
+    check("IEC TIME milliseconds convert to 100 ms ticks", 20, plc_get_d(2));
+    check("IEC TIME division remainder", 0, plc_get_d32(4));
+    check("IEC timer uses captured T199", 199, last_timer_idx);
+    check("IEC timer accepts D-register preset", 20, last_timer_preset);
+    check("IEC timer coil receives rung enable", 1, last_timer_enable);
+    check("IEC TN199 current converts back to ET ms", 700, plc_get_d(6));
+    check("IEC TOF reset targets T198", 198, last_timer_reset);
+    check("plain and enabled IEC timer forms have no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
 int main(void) {
     test_inactive_step_is_gated();
     test_transfer_and_handover();
@@ -532,6 +608,8 @@ int main(void) {
     test_requested_shift_encode_float_and_inline_compare();
     test_fsm_counter_calls_and_inline_and_comparisons();
     test_fsm_counter_structured_operands_and_bon();
+    test_orb_stack_clears_between_rungs();
+    test_iec_timer_compiler_forms();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
