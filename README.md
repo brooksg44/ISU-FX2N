@@ -84,16 +84,23 @@ Special devices maintained by the runtime:
 - **Coils:** `OUT`, `SET`, `RST`, and `PLS` for supported bit devices,
   including the captured extended `OUT S`, `SET S`, and `RST S` forms
 - **Stack and blocks:** `MPS`, `MRD`, `MPP`, `ANB`, and `ORB`
+- **Subroutines:** captured Structured Text `CALL P`, subroutine markers, and
+  `SRET`
 - **Sequence:** `STL`, `RET`, deferred STL state transfer, `END`, and the
   compiled program-body terminator
 - **Timers and counters:** `OUT T`, `OUT C`, and Structured Ladder `OUT_C`
   with constant presets; `RST T`, `RST C`, and the captured Structured Ladder
-  counter-reset form
-- **Data:** `MOV`/`MOVE_E` with integer constants and D registers
-- **Comparison:** the captured two-input `EQ_E` form with D-register and
-  integer-constant operands
-- **Range and shift:** `ZRST` bit ranges and captured `SFTL` bit-range shifts
-- **Decode:** captured `DECO C0 S9 K4` counter-to-one-hot-state decoding
+  counter-reset form; compiler-inlined `CTU` execution used by `FSM_Counter`
+- **Data movement:** `MOV`/`MOVE_E`, `BMOV`, and `FMOV`
+- **Comparison:** `CMP`; signed 16-bit `LD`, `AND`, and `OR` forms of `=`, `>`,
+  `<`, `<>`, `<=`, and `>=`; plus compatible captured `EQ_E`/`NE_E` forms
+- **Arithmetic and word logic:** `ADD`, `SUB`, `MUL`, `DIV`, `INC`, `DEC`,
+  `WAND`, `WOR`, `WXOR`, and `NEG`
+- **Rotation and shift:** `ROR`, `ROL`, `SFTR`, `SFTL`, `SFWR`, and `SFRD`
+- **Data conversion and selection:** `ENCO`, `BON` (including captured
+  D28-indexed structured BOOL arrays), and signed-integer `FLT`
+- **Range and decode:** `ZRST` bit ranges and captured
+  `DECO C0 S9 K4` counter-to-one-hot-state decoding
 - **Drum sequencing:** captured `ABSD D300 C0 Y0 K4` absolute-drum tables
 
 These forms have been exercised by the GX Works teaching programs listed in
@@ -101,9 +108,9 @@ These forms have been exercised by the GX Works teaching programs listed in
 observed in downloads; similarly named variants with different operand types
 may still require additional decoding.
 
-Not yet implemented includes `PLF`, `MC`/`MCR`, `INV`, general comparison
-contacts (`LD=`, `LD>` and related forms), `CMP`, `ZCP`, `ADD`, `SUB`, `MUL`,
-`DIV`, `INC`, `DEC`, and IEC `CTU` function-block execution.
+Not yet implemented includes `PLF`, `MC`/`MCR`, `INV`, `ZCP`, double-word and
+pulse variants of the applied instructions, and generic IEC function-block
+execution beyond the compiler-inlined forms observed in validated downloads.
 
 An unimplemented instruction does not fail silently — it is counted and
 reported in the diagnostic dump, naming the opcode.
@@ -232,7 +239,9 @@ the single most important idea to take from this source. See `plc_scan.h`.
   timer and counter ranges.
 - **Force** works for X, Y, M, S and M8000-range devices. T and C have not been
   located in the force address space and are ignored rather than guessed at.
-- Applied instructions beyond `MOV` are not implemented (see above).
+- Applied-instruction support is currently limited to the ordinary 16-bit
+  forms listed above; indexed, double-word, and pulse variants remain future
+  work.
 
 ---
 

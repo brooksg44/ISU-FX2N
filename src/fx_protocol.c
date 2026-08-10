@@ -548,6 +548,10 @@ static void trace_dump(void) {
            plc_get_m(M_RUN_MONITOR), plc_get_m(M_INITIAL_PULSE),
            plc_get_d(100), plc_get_d(101), plc_exec_unknown_count(),
            plc_exec_last_bad_opcode());
+    printf("FSM_Counter: X0=%u M1486=%u M1487=%u M1503=%u "
+           "D995(CV)=%u D997(index)=%u D998(copy)=%u\r\n",
+           plc_get_x(0), plc_get_m(1486), plc_get_m(1487), plc_get_m(1503),
+           plc_get_d(995), plc_get_d(997), plc_get_d(998));
     printf("code+005C:");
     for (uint16_t off = 0x5C; off < 0x7C; off++) {
         printf(" %02X", plc_program_read(off));

@@ -374,6 +374,146 @@ static void test_fsm_counter_decode_captured_deco(void) {
           plc_exec_unknown_count());
 }
 
+static void test_requested_move_compare_and_arithmetic(void) {
+    static const uint16_t program[] = {
+        0x2F00,
+        0x0024, 0x8005, 0x8000, 0x8003, 0x8000, 0x8400, 0x8008, /* CMP K5 K3 M0 */
+        0x002E, 0x8600, 0x8600, 0x8604, 0x8600, 0x8002, 0x8000, /* BMOV D0 D2 K2 */
+        0x0030, 0x80AA, 0x8055, 0x8608, 0x8600, 0x8003, 0x8000, /* FMOV K55AA D4 K3 */
+        0x0038, 0x8007, 0x8000, 0x8003, 0x8000, 0x8614, 0x8600, /* ADD K7 K3 D10 */
+        0x003A, 0x8007, 0x8000, 0x800A, 0x8000, 0x8616, 0x8600, /* SUB K7 K10 D11 */
+        0x003C, 0x80FE, 0x80FF, 0x8003, 0x8000, 0x8618, 0x8600, /* MUL K-2 K3 D12 */
+        0x003E, 0x8007, 0x8000, 0x8003, 0x8000, 0x861C, 0x8600, /* DIV K7 K3 D14 */
+        0x0044, 0x80F0, 0x800F, 0x80FF, 0x8000, 0x8620, 0x8600, /* WAND */
+        0x0046, 0x80F0, 0x8000, 0x800F, 0x8000, 0x8622, 0x8600, /* WOR */
+        0x0048, 0x80AA, 0x8000, 0x80FF, 0x8000, 0x8624, 0x8600, /* WXOR */
+        0x0040, 0x8628, 0x8600, /* INC D20 */
+        0x0042, 0x8628, 0x8600, /* DEC D20 */
+        0x004A, 0x862A, 0x8600, /* NEG D21 */
+        0x001C,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_set_d(0, 0x1111); plc_set_d(1, 0x2222);
+    plc_set_d(20, 9); plc_set_d(21, 5);
+    plc_exec_scan();
+    check("CMP sets greater destination", 1, plc_get_m(0));
+    check("CMP clears equal destination", 0, plc_get_m(1));
+    check("BMOV copies first word", 0x1111, plc_get_d(2));
+    check("BMOV copies second word", 0x2222, plc_get_d(3));
+    check("FMOV fills final word", 0x55AA, plc_get_d(6));
+    check("ADD result", 10, plc_get_d(10));
+    check("SUB signed wrapping result", 0xFFFD, plc_get_d(11));
+    check("MUL double-word result", (long)0xFFFFFFFAu, (long)plc_get_d32(12));
+    check("DIV quotient", 2, plc_get_d(14));
+    check("DIV remainder", 1, plc_get_d(15));
+    check("WAND result", 0x00F0, plc_get_d(16));
+    check("WOR result", 0x00FF, plc_get_d(17));
+    check("WXOR result", 0x0055, plc_get_d(18));
+    check("INC and DEC compose", 9, plc_get_d(20));
+    check("NEG result", 0xFFFB, plc_get_d(21));
+    check("move/arithmetic forms have no unknown opcode", 0, plc_exec_unknown_count());
+}
+
+static void test_requested_shift_encode_float_and_inline_compare(void) {
+    static const uint16_t program[] = {
+        0x2F00,
+        0x004C, 0x8600, 0x8600, 0x8001, 0x8000, /* ROR D0 K1 */
+        0x004E, 0x8602, 0x8600, 0x8004, 0x8000, /* ROL D1 K4 */
+        0x0054, 0x8400, 0x8004, 0x8400, 0x8008, 0x8004, 0x8000, 0x8001, 0x8000, /* SFTR X0 M0 K4 K1 */
+        0x005C, 0x8012, 0x8034, 0x8614, 0x8600, 0x8004, 0x8000, /* SFWR K3412 D10 K4 */
+        0x005E, 0x8614, 0x8600, 0x8628, 0x8600, 0x8004, 0x8000, /* SFRD D10 D20 K4 */
+        0x0064, 0x8008, 0x8000, 0x862A, 0x8600, 0x8004, 0x8000, /* ENCO K8 D21 K4 */
+        0x0072, 0x80FD, 0x80FF, 0x862C, 0x8600, /* FLT K-3 D22 */
+        0x01D0, 0x8005, 0x8000, 0x8005, 0x8000, 0xC500,
+        0x01D2, 0x8006, 0x8000, 0x8005, 0x8000, 0xC501,
+        0x01D4, 0x8004, 0x8000, 0x8005, 0x8000, 0xC502,
+        0x01D8, 0x8004, 0x8000, 0x8005, 0x8000, 0xC503,
+        0x01DA, 0x8005, 0x8000, 0x8005, 0x8000, 0xC504,
+        0x01DC, 0x8005, 0x8000, 0x8005, 0x8000, 0xC505,
+        0x001C,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true); plc_set_x(0, true);
+    plc_set_d(0, 1); plc_set_d(1, 0x1001);
+    plc_set_d(10, 2); plc_set_d(11, 1); plc_set_d(12, 2);
+    plc_exec_scan();
+    check("ROR rotates through bit 15", 0x8000, plc_get_d(0));
+    check("ROL rotates four bits", 0x0011, plc_get_d(1));
+    check("SFTR shifts toward lower bit", 1, plc_get_m(3));
+    check("SFRD returns oldest FIFO word", 1, plc_get_d(20));
+    check("ENCO returns active bit number", 3, plc_get_d(21));
+    check("FLT IEEE-754 bits", (long)0xC0400000u, (long)plc_get_d32(22));
+    check("all six inline comparisons", 0x3F,
+          plc_get_y(0) | (plc_get_y(1) << 1) | (plc_get_y(2) << 2) |
+          (plc_get_y(3) << 3) | (plc_get_y(4) << 4) | (plc_get_y(5) << 5));
+    check("shift/data/comparison forms have no unknown opcode", 0, plc_exec_unknown_count());
+}
+
+static void test_fsm_counter_calls_and_inline_and_comparisons(void) {
+    /* FSM_Counter capture form: CALL P32 is encoded as a byte-addressed
+     * pointer operand (0x40 / 2), while the subroutine marker is B020. */
+    static const uint16_t program[] = {
+        0x2F00,
+        0x0012, 0x8840, 0x8000, /* CALL P32 */
+        0x001C,                 /* FEND: subroutines follow */
+        0xB020,                 /* P32 */
+        0x2F00,
+        0x01E0, 0x8600, 0x8600, 0x8005, 0x8000, /* AND= D0 K5 */
+        0xC500,
+        0x2F00,
+        0x01E8, 0x8600, 0x8600, 0x8006, 0x8000, /* AND<> D0 K6 */
+        0xC501,
+        0x0014, /* SRET */
+        0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_set_d(0, 5);
+
+    plc_exec_scan();
+
+    check("captured CALL executes P32 subroutine", 1, plc_get_y(0));
+    check("captured AND<> combines comparison", 1, plc_get_y(1));
+    check("CALL/AND comparison forms have no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
+static void test_fsm_counter_structured_operands_and_bon(void) {
+    static const uint16_t program[] = {
+        0x2F00,
+        0x0068, 0xA4BD, 0x880D, 0x84BA, 0x800D,
+                0x8001, 0x8000,                   /* BON M1469 M1466 K1 */
+        0x0028, 0xA4BD, 0x880D, 0x84BB, 0x800D, /* MOV M1469 M1467 */
+        0x0068, 0x8499, 0x880D, 0xA489, 0x800D,
+                0x8000, 0x8000,                   /* SArray[0] := M1433 */
+        0x0028, 0x8489, 0x880D, 0x84DE, 0x880D, /* packed array MOV */
+        0x0040, 0x8638, 0x8000,                   /* INC D28 */
+        0x001C,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_set_m(1469, true);
+    plc_set_m(1471, true);
+    plc_set_m(1433, true);
+    plc_set_d(28, 1);
+
+    plc_exec_scan();
+
+    check("structured MOV accepts A4/88 bit operand", 1, plc_get_m(1467));
+    check("captured BON mirrors selected source bit", 1, plc_get_m(1466));
+    check("structured BON uses implicit D28 array index", 1, plc_get_m(1418));
+    check("structured BON leaves preceding array bit off", 0, plc_get_m(1417));
+    check("structured MOV copies packed Stp_Ary[1]", 1, plc_get_m(1503));
+    check("low D register accepts 0x80 high operand word", 2, plc_get_d(28));
+    check("structured operand/BON forms have no unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
 int main(void) {
     test_inactive_step_is_gated();
     test_transfer_and_handover();
@@ -388,6 +528,10 @@ int main(void) {
     test_fsm_shl_captured_sftl();
     test_fsm_drum_absd_and_out_c();
     test_fsm_counter_decode_captured_deco();
+    test_requested_move_compare_and_arithmetic();
+    test_requested_shift_encode_float_and_inline_compare();
+    test_fsm_counter_calls_and_inline_and_comparisons();
+    test_fsm_counter_structured_operands_and_bon();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

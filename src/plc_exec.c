@@ -4,6 +4,8 @@
 #include "plc_program.h"
 #include "plc_scan.h"
 
+#include <string.h>
+
 /* Device type nibbles. */
 #define DEV_X 0x4
 #define DEV_Y 0x5
@@ -43,12 +45,35 @@
 #define MISC_RST_S 0x07 /* followed by one value word holding the S number */
 #define MISC_PLS_PREFIX 0x08
 #define MISC_RST_C 0x0C /* Structured Ladder counter reset + counter word */
+#define MISC_CALL 0x12 /* followed by a typed P pointer operand */
+#define MISC_SRET 0x14
 #define MISC_END 0x0F
 #define MISC_FEND 0x1C /* program body terminator emitted before END */
 #define MISC_MOV 0x28 /* followed by two typed operand pairs */
+#define MISC_CMP 0x24
+#define MISC_BMOV 0x2E
+#define MISC_FMOV 0x30
+#define MISC_ADD 0x38
+#define MISC_SUB 0x3A
+#define MISC_MUL 0x3C
+#define MISC_DIV 0x3E
+#define MISC_INC 0x40
+#define MISC_DEC 0x42
+#define MISC_WAND 0x44
+#define MISC_WOR 0x46
+#define MISC_WXOR 0x48
+#define MISC_NEG 0x4A
+#define MISC_ROR 0x4C
+#define MISC_ROL 0x4E
+#define MISC_SFTR 0x54
+#define MISC_SFWR 0x5C
+#define MISC_SFRD 0x5E
 #define MISC_SFTL 0x56 /* source bit, destination bit, length, shift count */
 #define MISC_ZRST 0x60 /* followed by two typed bit-device operand pairs */
 #define MISC_DECO 0x62 /* source value, first destination bit, source width */
+#define MISC_ENCO 0x64
+#define MISC_BON 0x68
+#define MISC_FLT 0x72
 #define MISC_ABSD 0x8C /* table, counter, first output, output count */
 
 /* Stack and block operations: opcode 0xFF, operand selects. */
@@ -68,11 +93,34 @@
 #define OPERAND_COMPARE_CONST 0x82
 #define OPERAND_BIT 0x84
 #define OPERAND_D 0x86
+#define OPERAND_POINTER 0x88
 
 /* Structured Ladder EQ_E-2 prefix captured as bytes D0 01 in FSM_EQU. The
  * program image is fetched little-endian, hence instruction word 0x01D0. */
 #define EQ_E_WORD 0x01D0
 #define OUT_C_ENABLE_WORD 0x01CA
+
+#define INLINE_LD_EQ 0x01D0
+#define INLINE_LD_GT 0x01D2
+#define INLINE_LD_LT 0x01D4
+#define INLINE_LD_NE 0x01D8
+#define INLINE_LD_LE 0x01DA
+#define INLINE_LD_GE 0x01DC
+#define INLINE_AND_EQ 0x01E0
+#define INLINE_AND_GT 0x01E2
+#define INLINE_AND_LT 0x01E4
+#define INLINE_AND_NE 0x01E8
+#define INLINE_AND_LE 0x01EA
+#define INLINE_AND_GE 0x01EC
+#define INLINE_OR_EQ 0x01F0
+#define INLINE_OR_GT 0x01F2
+#define INLINE_OR_LT 0x01F4
+#define INLINE_OR_NE 0x01F8
+#define INLINE_OR_LE 0x01FA
+#define INLINE_OR_GE 0x01FC
+
+#define OPCODE_SUBROUTINE 0xB0
+#define CALL_STACK_DEPTH 8
 
 /* Preset coils live in the misc group with a device nibble. */
 #define OPCODE_OUT_T 0x06
@@ -100,6 +148,9 @@ static uint16_t fetch(uint32_t off) {
     return (uint16_t)(plc_program_read(off) | ((uint16_t)plc_program_read(off + 1) << 8));
 }
 
+static bool read_bit_operand(uint16_t lo, uint16_t hi, uint8_t *dev,
+                             uint8_t *number);
+
 static bool read_word_operand(uint16_t lo, uint16_t hi, uint16_t *value) {
     uint8_t type = (uint8_t)(lo >> 8);
     uint16_t raw = (uint16_t)((lo & 0xFF) | ((hi & 0xFF) << 8));
@@ -114,9 +165,73 @@ static bool read_word_operand(uint16_t lo, uint16_t hi, uint16_t *value) {
     return false;
 }
 
+static bool word_operand_register(uint16_t lo, uint16_t hi, uint16_t *reg) {
+    uint16_t raw;
+    if ((lo >> 8) != OPERAND_D ||
+        ((hi >> 8) != OPERAND_D && (hi >> 8) != OPERAND_CONST)) return false;
+    raw = (uint16_t)((lo & 0xFF) | ((hi & 0xFF) << 8));
+    if ((raw & 1u) || raw / 2u >= PLC_NUM_D) return false;
+    *reg = (uint16_t)(raw / 2u);
+    return true;
+}
+
+static bool fetch_word_value(uint32_t *off, uint16_t *value) {
+    uint16_t lo = fetch(*off), hi = fetch(*off + 2);
+    *off += 4;
+    return read_word_operand(lo, hi, value);
+}
+
+static bool fetch_word_register(uint32_t *off, uint16_t *reg) {
+    uint16_t lo = fetch(*off), hi = fetch(*off + 2);
+    *off += 4;
+    return word_operand_register(lo, hi, reg);
+}
+
+static bool fetch_bit_device(uint32_t *off, uint8_t *dev, uint8_t *number) {
+    uint16_t lo = fetch(*off), hi = fetch(*off + 2);
+    *off += 4;
+    return read_bit_operand(lo, hi, dev, number);
+}
+
+static bool comparison_result(uint16_t instruction, int16_t a, int16_t b) {
+    switch (instruction & 0x000Eu) {
+        case 0x0000: return a == b;
+        case 0x0002: return a > b;
+        case 0x0004: return a < b;
+        case 0x0008: return a != b;
+        case 0x000A: return a <= b;
+        case 0x000C: return a >= b;
+        default: return false;
+    }
+}
+
+static bool is_inline_comparison(uint16_t word) {
+    uint16_t family = (uint16_t)(word & 0xFFF0u);
+    uint16_t relation = (uint16_t)(word & 0x000Eu);
+    bool valid_relation = relation == 0 || relation == 2 || relation == 4 ||
+                          relation == 8 || relation == 10 || relation == 12;
+    return valid_relation &&
+           (family == INLINE_LD_EQ || family == INLINE_AND_EQ ||
+            family == INLINE_OR_EQ);
+}
+
+static uint32_t find_subroutine(uint8_t pointer) {
+    uint16_t marker = (uint16_t)((OPCODE_SUBROUTINE << 8) | pointer);
+    for (uint32_t pos = PLC_CODE_OFFSET; pos + 1 < PLC_PROGRAM_BYTES; pos += 2) {
+        if (fetch(pos) == marker) return pos + 2;
+    }
+    return PLC_PROGRAM_BYTES;
+}
+
 static bool read_bit_operand(uint16_t lo, uint16_t hi, uint8_t *dev,
                              uint8_t *number) {
-    if ((lo >> 8) != OPERAND_BIT || (hi >> 8) != OPERAND_CONST) {
+    uint8_t lo_type = (uint8_t)(lo >> 8);
+    uint8_t hi_type = (uint8_t)(hi >> 8);
+    /* Structured POUs use bit 5 in the low type and bit 3 in the high type
+     * for compiler-owned BOOL variables. They do not change the captured
+     * device nibble or point number. */
+    if ((lo_type & (uint8_t)~0x20u) != OPERAND_BIT ||
+        (hi_type != OPERAND_CONST && hi_type != OPERAND_POINTER)) {
         return false;
     }
     *number = (uint8_t)(lo & 0xFF);
@@ -196,6 +311,191 @@ static void write_bit(uint8_t dev, uint8_t n, bool v) {
     else if (dev <= 0x3) plc_set_s(i, v);
 }
 
+static void bad_instruction(uint16_t word) {
+    unknown_count++;
+    last_bad_opcode = word;
+}
+
+/* Executes the ordinary (non-D/P) 16-bit forms of the requested applied
+ * instructions. Their instruction word is 0x0010 + 2 * FNC. */
+static bool execute_applied(uint16_t instruction, uint32_t *off, bool enabled) {
+    uint16_t a, b, n, dst;
+    uint8_t sdev, snum, ddev, dnum;
+    bool valid = true;
+
+    switch (instruction) {
+        case MISC_CMP:
+            valid = fetch_word_value(off, &a) && fetch_word_value(off, &b) &&
+                    fetch_bit_device(off, &ddev, &dnum) && dnum <= 253;
+            if (valid && enabled) {
+                write_bit(ddev, dnum, (int16_t)a > (int16_t)b);
+                write_bit(ddev, (uint8_t)(dnum + 1), (int16_t)a == (int16_t)b);
+                write_bit(ddev, (uint8_t)(dnum + 2), (int16_t)a < (int16_t)b);
+            }
+            break;
+        case MISC_BMOV:
+            valid = fetch_word_register(off, &a) && fetch_word_register(off, &dst) &&
+                    fetch_word_value(off, &n) && n <= PLC_NUM_D &&
+                    (uint32_t)a + n <= PLC_NUM_D && (uint32_t)dst + n <= PLC_NUM_D;
+            if (valid && enabled) {
+                if (dst > a && dst < a + n) {
+                    for (uint16_t i = n; i-- > 0;) plc_set_d((uint16_t)(dst + i), plc_get_d((uint16_t)(a + i)));
+                } else {
+                    for (uint16_t i = 0; i < n; i++) plc_set_d((uint16_t)(dst + i), plc_get_d((uint16_t)(a + i)));
+                }
+            }
+            break;
+        case MISC_FMOV:
+            valid = fetch_word_value(off, &a) && fetch_word_register(off, &dst) &&
+                    fetch_word_value(off, &n) && (uint32_t)dst + n <= PLC_NUM_D;
+            if (valid && enabled) for (uint16_t i = 0; i < n; i++) plc_set_d((uint16_t)(dst + i), a);
+            break;
+        case MISC_ADD: case MISC_SUB: case MISC_MUL: case MISC_DIV:
+        case MISC_WAND: case MISC_WOR: case MISC_WXOR:
+            valid = fetch_word_value(off, &a) && fetch_word_value(off, &b) && fetch_word_register(off, &dst);
+            if (valid && instruction == MISC_MUL && dst + 1u >= PLC_NUM_D) valid = false;
+            if (valid && instruction == MISC_DIV && dst + 1u >= PLC_NUM_D) valid = false;
+            if (valid && instruction == MISC_DIV && b == 0) valid = false;
+            if (valid && enabled) {
+                switch (instruction) {
+                    case MISC_ADD: plc_set_d(dst, (uint16_t)(a + b)); break;
+                    case MISC_SUB: plc_set_d(dst, (uint16_t)(a - b)); break;
+                    case MISC_MUL: plc_set_d32(dst, (uint32_t)((int32_t)(int16_t)a * (int32_t)(int16_t)b)); break;
+                    case MISC_DIV:
+                        plc_set_d(dst, (uint16_t)((int16_t)a / (int16_t)b));
+                        plc_set_d((uint16_t)(dst + 1), (uint16_t)((int16_t)a % (int16_t)b));
+                        break;
+                    case MISC_WAND: plc_set_d(dst, (uint16_t)(a & b)); break;
+                    case MISC_WOR: plc_set_d(dst, (uint16_t)(a | b)); break;
+                    default: plc_set_d(dst, (uint16_t)(a ^ b)); break;
+                }
+            }
+            break;
+        case MISC_INC: case MISC_DEC: case MISC_NEG:
+            valid = fetch_word_register(off, &dst);
+            if (valid && enabled) {
+                uint16_t v = plc_get_d(dst);
+                plc_set_d(dst, instruction == MISC_INC ? (uint16_t)(v + 1) :
+                              instruction == MISC_DEC ? (uint16_t)(v - 1) :
+                              (uint16_t)(-(int16_t)v));
+            }
+            break;
+        case MISC_ROR: case MISC_ROL:
+            valid = fetch_word_register(off, &dst) && fetch_word_value(off, &n);
+            if (valid && enabled) {
+                uint16_t v = plc_get_d(dst);
+                n &= 15u;
+                if (n) plc_set_d(dst, instruction == MISC_ROR ?
+                    (uint16_t)((v >> n) | (v << (16u - n))) :
+                    (uint16_t)((v << n) | (v >> (16u - n))));
+            }
+            break;
+        case MISC_SFTR:
+            valid = fetch_bit_device(off, &sdev, &snum) && fetch_bit_device(off, &ddev, &dnum) &&
+                    fetch_word_value(off, &n) && fetch_word_value(off, &b) &&
+                    n > 0 && b <= n && (uint32_t)dnum + n <= 256u;
+            if (valid && enabled) {
+                bool source = read_bit(sdev, snum);
+                for (uint16_t pass = 0; pass < b; pass++) {
+                    for (uint16_t i = 0; i + 1 < n; i++)
+                        write_bit(ddev, (uint8_t)(dnum + i), read_bit(ddev, (uint8_t)(dnum + i + 1)));
+                    write_bit(ddev, (uint8_t)(dnum + n - 1), pass == 0 ? source : false);
+                }
+            }
+            break;
+        case MISC_SFWR:
+            valid = fetch_word_value(off, &a) && fetch_word_register(off, &dst) &&
+                    fetch_word_value(off, &n) && n >= 2 && (uint32_t)dst + n <= PLC_NUM_D;
+            if (valid && enabled) {
+                uint16_t pointer = plc_get_d(dst);
+                bool full = pointer >= n - 1u;
+                plc_set_m(8022, full);
+                if (!full) {
+                    pointer++;
+                    plc_set_d(dst, pointer);
+                    plc_set_d((uint16_t)(dst + pointer), a);
+                }
+            }
+            break;
+        case MISC_SFRD:
+            valid = fetch_word_register(off, &a) && fetch_word_register(off, &dst) &&
+                    fetch_word_value(off, &n) && n >= 2 && (uint32_t)a + n <= PLC_NUM_D;
+            if (valid && enabled) {
+                uint16_t pointer = plc_get_d(a);
+                plc_set_m(8020, pointer == 0);
+                if (pointer) {
+                    plc_set_d(dst, plc_get_d((uint16_t)(a + 1)));
+                    for (uint16_t i = 1; i < pointer; i++)
+                        plc_set_d((uint16_t)(a + i), plc_get_d((uint16_t)(a + i + 1)));
+                    plc_set_d(a, (uint16_t)(pointer - 1));
+                }
+            }
+            break;
+        case MISC_ENCO:
+        {
+            uint16_t s_lo = fetch(*off), s_hi = fetch(*off + 2);
+            bool word_source;
+            *off += 4;
+            word_source = read_word_operand(s_lo, s_hi, &a);
+            if (!word_source) valid = read_bit_operand(s_lo, s_hi, &sdev, &snum);
+            valid = valid && fetch_word_register(off, &dst) &&
+                    fetch_word_value(off, &n) && n >= 1 && n <= 4 &&
+                    (word_source || (uint32_t)snum + (1u << n) <= 256u);
+            if (valid && enabled) {
+                uint16_t limit = (uint16_t)(1u << n), encoded = 0;
+                for (uint16_t i = 0; i < limit; i++) {
+                    bool on = word_source ? ((a >> i) & 1u) != 0 :
+                                             read_bit(sdev, (uint8_t)(snum + i));
+                    if (on) encoded = i;
+                }
+                plc_set_d(dst, encoded);
+            }
+            break;
+        }
+        case MISC_BON:
+        {
+            uint16_t s_lo = fetch(*off), s_hi = fetch(*off + 2);
+            uint16_t d_lo = fetch(*off + 4), d_hi = fetch(*off + 6);
+            *off += 8;
+            bool source_is_group = ((s_lo >> 8) & 0x20u) != 0;
+            bool destination_is_group = ((d_lo >> 8) & 0x20u) != 0;
+            uint16_t array_index = plc_get_d(28);
+            valid = read_bit_operand(s_lo, s_hi, &sdev, &snum) &&
+                    read_bit_operand(d_lo, d_hi, &ddev, &dnum) &&
+                    fetch_word_value(off, &n) && n <= 15 &&
+                    (uint32_t)snum + (source_is_group ? array_index + n : 0u) <= 255u &&
+                    (uint32_t)dnum + (destination_is_group ? array_index + n : 0u) <= 255u;
+            if (valid && enabled) {
+                if (destination_is_group && !source_is_group) {
+                    /* Structured FB code copies StpNum to D28 immediately
+                     * before BON.  A4 marks an array operand indexed through
+                     * that implicit compiler register. */
+                    write_bit(ddev, (uint8_t)(dnum + array_index + n),
+                              read_bit(sdev, snum));
+                } else {
+                    write_bit(ddev, dnum,
+                              read_bit(sdev, (uint8_t)(snum + n +
+                                                       (source_is_group ? array_index : 0u))));
+                }
+            }
+            break;
+        }
+        case MISC_FLT:
+            valid = fetch_word_value(off, &a) && fetch_word_register(off, &dst) && dst + 1u < PLC_NUM_D;
+            if (valid && enabled) {
+                float f = (float)(int16_t)a;
+                uint32_t bits;
+                memcpy(&bits, &f, sizeof(bits));
+                plc_set_d32(dst, bits);
+            }
+            break;
+        default:
+            return false;
+    }
+    if (!valid) bad_instruction(instruction);
+    return true;
+}
+
 bool plc_exec_has_program(void) {
     for (uint32_t off = PLC_CODE_OFFSET; off + 1 < PLC_PROGRAM_BYTES; off += 2) {
         uint16_t w = fetch(off);
@@ -236,6 +536,8 @@ void plc_exec_scan(void) {
     uint8_t branch_sp = 0;
     bool block[16];
     uint8_t block_sp = 0;
+    uint32_t call_return[CALL_STACK_DEPTH];
+    uint8_t call_sp = 0;
 
     unknown_count = 0;
 
@@ -277,6 +579,34 @@ void plc_exec_scan(void) {
             if (operand == MISC_END || operand == MISC_FEND) {
                 stl_finish_scan(&stl);
                 return;
+            }
+            if (operand == MISC_CALL) {
+                uint16_t target_lo = fetch(off), target_hi = fetch(off + 2);
+                off += 4;
+                bool valid = (target_lo >> 8) == OPERAND_POINTER &&
+                             (target_hi >> 8) == OPERAND_CONST &&
+                             ((target_lo & 0xFF) & 1u) == 0;
+                uint8_t pointer = (uint8_t)((target_lo & 0xFF) / 2u);
+                uint32_t target = valid ? find_subroutine(pointer) : PLC_PROGRAM_BYTES;
+                if (!valid || target >= PLC_PROGRAM_BYTES ||
+                    (result && call_sp >= CALL_STACK_DEPTH)) {
+                    bad_instruction(word);
+                } else if (result) {
+                    call_return[call_sp++] = off;
+                    off = target;
+                }
+                continue;
+            }
+            if (operand == MISC_SRET) {
+                if (call_sp) {
+                    off = call_return[--call_sp];
+                } else {
+                    bad_instruction(word);
+                }
+                continue;
+            }
+            if (execute_applied(operand, &off, result)) {
+                continue;
             }
             if (operand == MISC_PLS_PREFIX) {
                 pls_pending = true;
@@ -471,6 +801,21 @@ void plc_exec_scan(void) {
                 uint16_t s_lo = fetch(off), s_hi = fetch(off + 2);
                 uint16_t d_lo = fetch(off + 4), d_hi = fetch(off + 6);
                 off += 8;
+                uint8_t s_dev, s_num, d_dev, d_num;
+                if (read_bit_operand(s_lo, s_hi, &s_dev, &s_num) &&
+                    read_bit_operand(d_lo, d_hi, &d_dev, &d_num)) {
+                    if (result) {
+                        /* GX Works2 uses this MOV form for ARRAY [0..15] OF
+                         * BOOL parameters. Copy a packed word, with a
+                         * temporary so overlapping compiler VAR areas work. */
+                        bool bits[16];
+                        for (uint8_t i = 0; i < 16; i++)
+                            bits[i] = read_bit(s_dev, (uint8_t)(s_num + i));
+                        for (uint8_t i = 0; i < 16; i++)
+                            write_bit(d_dev, (uint8_t)(d_num + i), bits[i]);
+                    }
+                    continue;
+                }
                 uint16_t value;
                 if ((s_lo >> 8) == OPERAND_D) {
                     uint16_t reg = (uint16_t)(((s_lo & 0xFF) | ((s_hi & 0xFF) << 8)) / 2);
@@ -538,14 +883,19 @@ void plc_exec_scan(void) {
         /* FSM_EQU capture: D001 <typed lhs> <typed rhs>. EQ_E is a
          * comparison contact/block and starts its network with the equality
          * result; the following automatic M coil consumes that result. */
-        if (word == EQ_E_WORD) {
+        if (is_inline_comparison(word)) {
             uint16_t a_lo = fetch(off), a_hi = fetch(off + 2);
             uint16_t b_lo = fetch(off + 4), b_hi = fetch(off + 6);
             off += 8;
             uint16_t a, b;
             if (read_word_operand(a_lo, a_hi, &a) &&
                 read_word_operand(b_lo, b_hi, &b)) {
-                result = a == b;
+                bool comparison = comparison_result(word, (int16_t)a, (int16_t)b);
+                switch (word & 0xFFF0u) {
+                    case INLINE_AND_EQ: result = result && comparison; break;
+                    case INLINE_OR_EQ: result = result || comparison; break;
+                    default: result = comparison; break;
+                }
             } else {
                 result = false;
                 unknown_count++;

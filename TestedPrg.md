@@ -148,7 +148,21 @@ from compiling, downloading, executing, or being monitored.
 - **Physical behavior:** The four-light sequence matches the GX Works 2
   simulator on the Pico trainer.
 
+### `FSM_Counter`
+
+- **Project:** `projects/4LightsSeqLDv2.gxw`
+- **Validated:** 2026-08-10
+- **Status:** Working
+- **CPU target:** `FX2N/FX2NC`
+- **Structured execution:** Captured `CALL P`/`SRET` subroutines and the
+  compiler-inlined CTU sequence execute correctly.
+- **Array operation:** `A4` structured BOOL-array operands use the compiler's
+  implicit D28 index, matching GX Works 2 for `Get_Step` and `SR_Step`.
+- **Monitoring:** Step index, counter value, transition arrays, and output
+  values match the GX Works 2 simulator.
+- **Physical behavior:** X0/X1 advance the four-light sequence correctly on
+  the Pico trainer.
+
 ## Programs awaiting validation
 
-- `FSM_Counter`
 - `FSM_Counter_D`
