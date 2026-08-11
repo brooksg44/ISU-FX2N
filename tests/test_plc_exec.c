@@ -790,6 +790,11 @@ static void test_pulse_prefix_without_device_word_is_reported(void) {
  *         -- DMOV HC0A8006E D1002   IP address 192.168.0.110
  *
  * Each 32-bit operand is two typed operand pairs, low word first.
+ *
+ * The operands here are synthesized with a byte-addressed destination, which
+ * is the form the IEC timer function blocks were decoded with. The captured
+ * Structured Ladder form is index-addressed and tested separately below; this
+ * one exists to keep the older path working, not as evidence about it.
  */
 static void test_dmov_writes_a_32_bit_constant(void) {
     static const uint16_t program[] = {
@@ -812,12 +817,13 @@ static void test_dmov_writes_a_32_bit_constant(void) {
 /*
  * The captured rung, byte for byte, from a Structured Ladder DMOV block:
  *
- *   X0 -- DMOV s=999 d=D1000
+ *   X0 -- DMOV s=999 d=D2000
  *
- * The destination pair is 86D0 8807, where the high type is OPERAND_POINTER
- * rather than the 0x80 a 16-bit destination carries. That difference is what
- * this test exists to pin down: it was rejecting the whole instruction, and
- * the only visible symptom on the trainer was D1000 staying at zero.
+ * Both halves of the destination pair matter. The high type is
+ * OPERAND_POINTER, not the 0x80 a 16-bit destination carries, and rejecting it
+ * made the instruction do nothing at all. The address is then the register
+ * index rather than twice it, and decoding it the 16-bit way sent 999 to
+ * D1000 - the right value in the wrong register, which is far quieter.
  */
 static void test_dmov_decodes_the_captured_structured_rung(void) {
     static const uint16_t program[] = {
@@ -825,7 +831,7 @@ static void test_dmov_decodes_the_captured_structured_rung(void) {
         0x0029,                 /* DMOV */
         0x80E7, 0x8003,         /* K999, low word */
         0x8000, 0x8000,         /* K999, high word */
-        0x86D0, 0x8807,         /* D1000 */
+        0x86D0, 0x8807,         /* D2000 */
         0x8000, 0x8000,         /* zero padding */
         0x001C,                 /* FEND */
     };
@@ -835,8 +841,9 @@ static void test_dmov_decodes_the_captured_structured_rung(void) {
 
     plc_exec_scan();
 
-    check("captured DMOV writes 999 to D1000", 999, plc_get_d(1000));
-    check("captured DMOV clears the high word", 0, plc_get_d(1001));
+    check("captured DMOV writes 999 to D2000", 999, plc_get_d(2000));
+    check("captured DMOV clears the high word", 0, plc_get_d(2001));
+    check("captured DMOV leaves the halved address alone", 0, plc_get_d(1000));
     check("captured DMOV is not an unknown opcode", 0, plc_exec_unknown_count());
 }
 

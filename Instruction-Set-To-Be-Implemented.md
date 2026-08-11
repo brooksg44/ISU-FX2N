@@ -151,37 +151,41 @@ than a coincidence.
 function blocks, but nothing in the encoding is `TIME`-specific: each 32-bit
 operand is two typed operand pairs, low word first.
 
-A Structured Ladder `DMOV` block with `s = 999` and `d = D1000` captures as:
+A Structured Ladder `DMOV` block with `s = 999` and `d = D2000` captures as:
 
 ```text
 2400              LD X0
 0029              DMOV
 80E7 8003         K999, low word
 8000 8000         K999, high word
-86D0 8807         D1000
+86D0 8807         D2000
 8000 8000         padding
 001C              FEND
 ```
 
-Two details only the capture settles:
+Two details only the capture settles, and they failed in different ways:
 
 **The destination's high type is `0x88`, not `0x80`.** A 16-bit destination
 carries `OPERAND_CONST` there — `INC D28` is `8638 8000`. A 32-bit one carries
 `OPERAND_POINTER`. `read_bit_operand()` already admits the same marker on bit
 operands in structured POUs, so this is the established pattern rather than a
-special case. Rejecting it was what made a downloaded `DMOV` do nothing at all,
-with `D1000` simply staying at zero and `0x0029` reported as the last unknown
-opcode.
+special case. Rejecting it made a downloaded `DMOV` do nothing at all, with the
+destination staying at zero and `0x0029` reported as the last unknown opcode.
+
+**That type byte is also the unit the address is written in.** `0x07D0` is
+2000, and the destination is D2000 — the register index, not twice it.
+`OPERAND_CONST` means the byte address a 16-bit operand uses, `OPERAND_POINTER`
+the index. Reading the index as a byte address halves it, which sent 999 to
+D1000 for a rung whose destination was D2000: the right value in the wrong
+register, and much quieter than the outright rejection above. It was caught
+only because the rung was written against a register far enough from its own
+half to be obvious.
 
 **The second half of the destination really is constant zero padding.** The
 high register is never named, in either the IEC timer capture or this one. An
 earlier revision also accepted `D(dst + 1)` there on the assumption that a
 hand-written `DMOV` would name it; the capture disproves that, and the
 speculation has been removed.
-
-Note that the register address is a *byte* address, so `86D0 8807` is
-`0x07D0` = 2000, which is D1000. That convention is not specific to `DMOV` —
-`INC D28` encodes 28 as `0x38`.
 
 This matters because the FX2NC-ENET-ADP parameter block is written with
 `DMOV` — see the network configuration notes.

@@ -234,17 +234,36 @@ static bool read_word_operand(uint16_t lo, uint16_t hi, uint16_t *value) {
 
 static bool word_operand_register(uint16_t lo, uint16_t hi, uint16_t *reg) {
     uint16_t raw;
-    /* OPERAND_POINTER as the high type marks the destination of a 32-bit
-     * operation: `DMOV K999 D1000` from Structured Ladder captures as
-     * 86D0 8807, against 8638 8000 for the 16-bit `INC D28`. read_bit_operand
-     * already admits the same marker on bit operands for the same reason. */
     if ((lo >> 8) != OPERAND_D ||
-        ((hi >> 8) != OPERAND_D && (hi >> 8) != OPERAND_CONST &&
-         (hi >> 8) != OPERAND_POINTER)) return false;
+        ((hi >> 8) != OPERAND_D && (hi >> 8) != OPERAND_CONST)) return false;
     raw = (uint16_t)((lo & 0xFF) | ((hi & 0xFF) << 8));
     if ((raw & 1u) || raw / 2u >= PLC_NUM_D) return false;
     *reg = (uint16_t)(raw / 2u);
     return true;
+}
+
+/*
+ * Destination of a 32-bit operation, where the high type byte is the unit the
+ * address is written in. Captured from the same Structured Ladder rung twice,
+ * changing only the destination:
+ *
+ *   86D0 8807   DMOV ... D2000   0x07D0 = 2000, the register index
+ *   8638 8000   INC D28          0x38   = 56,   twice the index
+ *
+ * So OPERAND_POINTER addresses a register directly and OPERAND_CONST addresses
+ * it by byte. Decoding the first as a byte address is what quietly wrote 999
+ * to D1000 for a rung whose destination was D2000 - the instruction ran, and
+ * only the register was wrong.
+ */
+static bool dword_operand_register(uint16_t lo, uint16_t hi, uint16_t *reg) {
+    if ((lo >> 8) != OPERAND_D) {
+        return false;
+    }
+    if ((hi >> 8) == OPERAND_POINTER) {
+        *reg = (uint16_t)((lo & 0xFF) | ((hi & 0xFF) << 8));
+        return *reg < PLC_NUM_D;
+    }
+    return word_operand_register(lo, hi, reg);
 }
 
 static bool fetch_word_value(uint32_t *off, uint16_t *value) {
@@ -409,7 +428,7 @@ static bool execute_applied(uint16_t instruction, uint32_t *off, bool enabled) {
              * register is never named. */
             valid = read_word_operand(s0_lo, s0_hi, &value_lo) &&
                     read_word_operand(s1_lo, s1_hi, &value_hi) &&
-                    word_operand_register(d0_lo, d0_hi, &dst) &&
+                    dword_operand_register(d0_lo, d0_hi, &dst) &&
                     read_word_operand(d1_lo, d1_hi, &padding) && padding == 0 &&
                     dst + 1u < PLC_NUM_D;
             if (valid && enabled) {
