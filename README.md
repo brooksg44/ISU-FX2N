@@ -184,6 +184,25 @@ which stops Monitor Mode from starting.
 tracer in full — what it keeps, what it discards, and how to read a captured
 frame. Recordings made with it are in [`captures/`](captures/).
 
+**Wi-Fi provisioning.** Credentials are not compiled in. Send one line over the
+same USB console:
+
+```text
+wifi <ssid> <key>
+```
+
+for example `wifi PLCLAB idahostate`. The key must be 8–63 characters, and
+neither field may contain spaces. It is stored in flash alongside the user
+program and survives a power cycle, so each trainer is provisioned once.
+
+The `?` dump reports the stored SSID and confirms a key is present, but never
+prints the key itself — dumps get pasted into bug reports and kept in
+`captures/`.
+
+Nothing consumes these credentials yet; the network stack is not built. This
+exists so that when it is, no passphrase ever has to live in the firmware
+image or in this repository.
+
 ---
 
 ## Building

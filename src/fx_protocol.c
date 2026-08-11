@@ -1,6 +1,7 @@
 #include "fx_protocol.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "fx_addr.h"
 #include "fx_monitor.h"
@@ -10,6 +11,7 @@
 #include "plc_storage.h"
 #include "plc_scan.h"
 #include "pico/stdlib.h"
+#include "wifi_config.h"
 
 #define STX 0x02
 #define ETX 0x03
@@ -478,6 +480,61 @@ static void handle_frame(void) {
     }
 }
 
+/*
+ * Line-buffered console commands, sharing the port with the binary protocol.
+ *
+ * Only a line that begins with a known verb produces any output. That is the
+ * same rule the absent idle dump obeys, and for the same reason: GX Works
+ * reopens this port and expects ACK, so unsolicited bytes break Monitor Mode.
+ * A verb GX Works would never send is what makes this safe.
+ *
+ * Sized to hold the longest legal command with room to spare, so a line that
+ * overflows cannot be a valid one - it is refused rather than truncated into
+ * a credential that would fail later, on the network.
+ */
+#define CONSOLE_LINE_MAX 128
+
+static char console_line[CONSOLE_LINE_MAX];
+static uint16_t console_len;
+static bool console_overflow;
+
+static void console_execute(void) {
+    char ssid[WIFI_SSID_SIZE], key[WIFI_KEY_SIZE];
+
+    if (strncmp(console_line, "wifi", 4) != 0) {
+        return; /* not a command of ours - stay silent */
+    }
+
+    if (console_overflow) {
+        printf("wifi: line too long, nothing stored\r\n");
+    } else if (wifi_config_parse(console_line, ssid, key)) {
+        plc_storage_wifi_set(ssid, key);
+        printf("wifi: stored ssid=%s, saved in a moment\r\n", ssid);
+    } else {
+        printf("wifi: usage: wifi <ssid> <key>\r\n");
+        printf("      no spaces in either; key is 8 to 63 characters\r\n");
+    }
+    stdio_flush();
+}
+
+static void console_char(uint8_t b) {
+    if (b == '\r' || b == '\n') {
+        if (console_len > 0) {
+            console_line[console_len] = '\0';
+            console_execute();
+        }
+        console_len = 0;
+        console_overflow = false;
+        return;
+    }
+
+    if (console_len < CONSOLE_LINE_MAX - 1) {
+        console_line[console_len++] = (char)b;
+    } else {
+        console_overflow = true;
+    }
+}
+
 /* Human-readable dump, printed with explicit CRLF because CRLF translation is
  * turned off for the binary protocol. */
 static void trace_dump(void) {
@@ -489,6 +546,17 @@ static void trace_dump(void) {
     printf("program: %s, unknown opcodes this scan: %u (last 0x%04X)\r\n",
            plc_exec_has_program() ? "present" : "none (running built-in demo)",
            plc_exec_unknown_count(), plc_exec_last_bad_opcode());
+
+    /* The SSID identifies which network this trainer is provisioned for; the
+     * passphrase is never printed. Dumps get pasted into bug reports and kept
+     * in captures/, which is in Git. */
+    const char *ssid, *key;
+    if (plc_storage_wifi_get(&ssid, &key)) {
+        printf("wifi: ssid=%s, key stored (%u chars)\r\n", ssid,
+               (unsigned)strlen(key));
+    } else {
+        printf("wifi: not provisioned - send: wifi <ssid> <key>\r\n");
+    }
 
     printf("program memory (0x8000 + offset):\r\n");
     for (uint16_t off = 0; off < 0x180; off += 16) {
@@ -619,6 +687,7 @@ void fx_protocol_task(void) {
             rx_len = 0;
         }
         if (!in_frame) {
+            console_char(b);
             continue;
         }
 

@@ -30,6 +30,10 @@ cc $CFLAGS test_modbus_map.c ../src/modbus_map.c ../src/plc_memory.c \
     -o test_modbus_map
 ./test_modbus_map
 
+echo "== Wi-Fi provisioning command =="
+cc $CFLAGS test_wifi_config.c ../src/wifi_config.c -o test_wifi_config
+./test_wifi_config
+
 echo "== PLC execution and STL semantics =="
 cc $CFLAGS test_plc_exec.c ../src/plc_exec.c ../src/plc_memory.c \
     ../src/plc_program.c -o test_plc_exec

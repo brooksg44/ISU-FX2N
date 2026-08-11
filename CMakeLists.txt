@@ -20,6 +20,7 @@ add_executable(ISU-FX2N
     src/plc_exec.c
     src/modbus.c
     src/modbus_map.c
+    src/wifi_config.c
 )
 
 target_include_directories(ISU-FX2N PRIVATE src)

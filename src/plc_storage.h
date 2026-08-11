@@ -31,4 +31,12 @@ void plc_storage_mark_dirty(void);
  * loop; it rate-limits itself and does nothing when clean. */
 void plc_storage_task(void);
 
+/* Stores Wi-Fi credentials and schedules the same deferred commit a program
+ * download uses, so they survive a power cycle. */
+void plc_storage_wifi_set(const char *ssid, const char *key);
+
+/* Yields the stored credentials, or false if the trainer has never been
+ * provisioned. The pointers stay valid until the next plc_storage_wifi_set. */
+bool plc_storage_wifi_get(const char **ssid, const char **key);
+
 #endif /* PLC_STORAGE_H */

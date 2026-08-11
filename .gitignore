@@ -8,6 +8,7 @@ tests/test_fx_addr
 tests/test_modbus_map
 tests/test_fx_monitor
 tests/test_plc_exec
+tests/test_wifi_config
 
 # Vendor reference manuals: kept locally, not redistributable
 *.pdf
