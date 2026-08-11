@@ -44,6 +44,22 @@
 #define MISC_SET_S 0x06 /* followed by one value word holding the S number */
 #define MISC_RST_S 0x07 /* followed by one value word holding the S number */
 #define MISC_PLS_PREFIX 0x08
+/*
+ * PLF prefix. INFERRED, NOT CAPTURED - the only encoding in this file that is
+ * not backed by an observed download.
+ *
+ * The basic instructions occupy the misc operands below 0x10 (applied
+ * instructions start at 0x10 + 2 * FNC), and the captured ones run
+ * 0x05 OUT S, 0x06 SET S, 0x07 RST S, 0x08 PLS, which puts PLF at 0x09 in the
+ * same order the FX mnemonic tables list them. That is a pattern, not
+ * evidence.
+ *
+ * Because a wrong guess here would silently mis-execute whatever 0x09 really
+ * is, the prefix is only honoured when a pulse device word actually follows
+ * it - see the peek at the use site. If a download ever reports 0x0009 as an
+ * unknown opcode, this constant is what to correct.
+ */
+#define MISC_PLF_PREFIX 0x09
 #define MISC_RST_C 0x0C /* Structured Ladder counter reset + counter word */
 #define MISC_CALL 0x12 /* followed by a typed P pointer operand */
 #define MISC_SRET 0x14
@@ -134,6 +150,21 @@
 #define STL_MAX_SOURCES 8
 #define STL_RESET_WORDS ((PLC_NUM_S + 31) / 32)
 
+/*
+ * Edge memory for the pulse instructions, one bit per program step.
+ *
+ * PLS must fire for exactly one scan on a rising rung, so the edge has to be
+ * measured against what the rung did at THIS instruction on the previous scan.
+ * Deriving it from the destination device instead does not work: with the rung
+ * held true the device itself alternates, so the coil toggles every scan
+ * rather than pulsing once.
+ *
+ * Indexing by the instruction's own program offset gives every PLS an
+ * independent history with no collisions, and costs 2000 bytes for the full
+ * 16000-step program space.
+ */
+#define PULSE_STATE_WORDS ((PLC_PROGRAM_STEPS + 31) / 32)
+
 typedef struct {
     bool in_stl;
     bool accepting_sources;
@@ -145,6 +176,27 @@ typedef struct {
 
 static uint16_t unknown_count;
 static uint16_t last_bad_opcode;
+static uint32_t pulse_prev[PULSE_STATE_WORDS];
+
+/*
+ * Records the rung state at the instruction stored at word_off and reports
+ * whether this scan is its edge - rising for PLS, falling for PLF. Steps
+ * beyond the program space cannot hold an instruction, so they never pulse.
+ */
+static bool pulse_edge(uint32_t word_off, bool rung, bool falling) {
+    uint32_t step = word_off / 2u;
+    if (step >= PLC_PROGRAM_STEPS) {
+        return false;
+    }
+    uint32_t mask = (uint32_t)1u << (step % 32u);
+    bool previous = (pulse_prev[step / 32u] & mask) != 0;
+    if (rung) {
+        pulse_prev[step / 32u] |= mask;
+    } else {
+        pulse_prev[step / 32u] &= ~mask;
+    }
+    return falling ? (previous && !rung) : (rung && !previous);
+}
 
 static uint16_t fetch(uint32_t off) {
     return (uint16_t)(plc_program_read(off) | ((uint16_t)plc_program_read(off + 1) << 8));
@@ -570,11 +622,12 @@ void plc_exec_scan(void) {
      * what a ladder diagram draws as the power flowing left to right. LD
      * starts a rung, AND/OR combine into it, OUT/SET/RST consume it.
      *
-     * `pls_pending` records that a 0x0008 prefix was seen, so the next device
-     * word is a PLS rather than a plain coil.
+     * `pulse_pending` records that a pulse prefix was seen, so the next device
+     * word is a PLS or PLF rather than a plain coil. It holds the prefix
+     * operand itself, or 0 when no pulse is pending.
      */
     bool result = false;
-    bool pls_pending = false;
+    uint8_t pulse_pending = 0;
     stl_context_t stl = {0};
 
     /*
@@ -592,6 +645,14 @@ void plc_exec_scan(void) {
     uint8_t call_sp = 0;
 
     unknown_count = 0;
+
+    /* A STOP -> RUN transition restarts the program, so no instruction has a
+     * previous rung state to compare against. Without this, a PLS whose rung
+     * was true when the PLC stopped would not fire on the first scan after it
+     * runs again - including after a download, which stops the PLC. */
+    if (plc_scan_is_first()) {
+        memset(pulse_prev, 0, sizeof pulse_prev);
+    }
 
     uint32_t off = PLC_CODE_OFFSET;
     while (off + 1 < PLC_PROGRAM_BYTES) {
@@ -665,8 +726,26 @@ void plc_exec_scan(void) {
             if (execute_applied(operand, &off, result)) {
                 continue;
             }
-            if (operand == MISC_PLS_PREFIX) {
-                pls_pending = true;
+            if (operand == MISC_PLS_PREFIX || operand == MISC_PLF_PREFIX) {
+                /*
+                 * A pulse prefix only means "pulse" when a device word really
+                 * follows it. Op nibble 8 is shared with the constant marker,
+                 * so opcode 0x80 exactly is excluded; anything else is
+                 * rejected outright rather than left pending, which would
+                 * otherwise let a misread prefix attach itself to a genuine
+                 * PLS further down the program.
+                 *
+                 * This check is what keeps the inferred PLF prefix safe: if
+                 * 0x09 turns out to be some other instruction, it is counted
+                 * as unknown and reported instead of silently executed.
+                 */
+                uint16_t next = fetch(off);
+                uint8_t next_opcode = (uint8_t)(next >> 8);
+                if ((next_opcode >> 4) != OP_PLS || next_opcode == OPCODE_CONST) {
+                    bad_instruction(word);
+                    continue;
+                }
+                pulse_pending = operand;
                 continue;
             }
             if (operand == MISC_RST_C) {
@@ -1031,12 +1110,15 @@ void plc_exec_scan(void) {
                 /* Only valid straight after the 0x0008 prefix; the same
                  * nibble means "constant" otherwise, which is why the prefix
                  * has to gate it. */
-                if (pls_pending) {
-                    pls_pending = false;
-                    /* Rising-edge pulse: set for exactly one scan. Edge state
-                     * is kept in the device itself, so a repeat scan with the
-                     * rung still true will not re-pulse. */
-                    write_bit(dev, operand, result && !read_bit(dev, operand));
+                if (pulse_pending) {
+                    bool falling = pulse_pending == MISC_PLF_PREFIX;
+                    pulse_pending = 0;
+                    /* Set for exactly one scan on the rung's edge - rising for
+                     * PLS, falling for PLF. The edge is measured from the rung
+                     * at this instruction, remembered per program step; see
+                     * pulse_edge(). `off` has already advanced past this
+                     * device word. */
+                    write_bit(dev, operand, pulse_edge(off - 2u, result, falling));
                 } else {
                     unknown_count++;
                     last_bad_opcode = word;

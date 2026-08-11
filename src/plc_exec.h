@@ -17,6 +17,8 @@
  * Multi-word instructions, matching the documented FX step counts:
  *   OUT T / OUT C   3 steps: coil word then a 32-bit constant in two 0x80 words
  *   PLS             2 steps: a 0x0008 prefix word then the device word
+ *   PLF             2 steps: as PLS but with a 0x0009 prefix - inferred from
+ *                            the basic-instruction ordering, not captured
  *   END             1 step:  opcode 0x00, operand 0x0F
  *
  * 0xFFFF is unwritten memory. GX Works leaves gaps between download blocks, so

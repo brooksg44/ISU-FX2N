@@ -106,11 +106,44 @@ The current runtime supports the following relevant core operations:
 - `LD`, `LDI`, `AND`, `ANI`, `OR`, and `ORI`
 - `OUT`, `SET`, and `RST` for supported bit devices
 - `MPS`, `MRD`, `MPP`, `ANB`, and `ORB`
-- `PLS` and `PLF` pulse behavior currently implemented by the decoder
+- `PLS`, whose rising edge is measured per program step rather than from the
+  destination device (a device-derived edge made a held-true rung toggle the
+  coil every scan instead of pulsing once)
+- `PLF`, sharing that edge memory, on an **inferred** prefix — see below
 - `STL`, `RET`, and deferred STL state transfers
 - timer and counter coils with constant presets
 - a limited `MOV` form using constants and D registers
 - `END`
+
+### The `PLF` prefix is inferred, not captured
+
+`PLF` is implemented as misc operand `0x09` followed by the same device word
+`PLS` uses. That value is a deduction, and it is the only encoding in the
+decoder that no download has confirmed:
+
+- applied instructions occupy operands `0x10 + 2 * FNC`, so the basic
+  instructions live below `0x10`;
+- the captured ones there run `0x05` OUT S, `0x06` SET S, `0x07` RST S,
+  `0x08` PLS — the order the FX mnemonic tables list them in, which puts PLF
+  next at `0x09`.
+
+`projects/TestCommsPLF.gxw` cannot settle it offline: it stores GX Works' own
+ladder format inside an Access database, not the downloaded bytecode.
+
+The inference is made self-limiting at the use site. A pulse prefix is only
+honoured when the following word is a pulse coil (op nibble `8`, excluding the
+`0x80` constant marker); anything else is counted and reported as an unknown
+opcode instead of being executed. So if `0x09` turns out to mean something
+else, the symptom is a reported unknown opcode, not silently wrong ladder.
+
+**To confirm or correct it:** download `projects/TestCommsPLF.gxw`, disconnect
+GX Works, and press `?` in a terminal. `PLF M0` compiles to two words, the
+second being `0x8800` (op nibble `8`, device nibble `8` = M, operand 0). The
+word before it in the program hex dump is the real prefix. If it is not
+`0x0009`, correct `MISC_PLF_PREFIX` in `src/plc_exec.c` — nothing else needs
+to change. If the dump instead reports `0x0009` as an unknown opcode, the
+inference is wrong in a different way and the following word is not a pulse
+coil at all.
 
 The following are known or likely gaps for the supplied project:
 

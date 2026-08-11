@@ -88,7 +88,7 @@ and is not reserved for local RUN/STOP control.
 ## Supported instructions
 
 - **Contacts:** `LD`, `LDI`, `AND`, `ANI`, `OR`, and `ORI`
-- **Coils:** `OUT`, `SET`, `RST`, and `PLS` for supported bit devices,
+- **Coils:** `OUT`, `SET`, `RST`, `PLS`, and `PLF` for supported bit devices,
   including the captured extended `OUT S`, `SET S`, and `RST S` forms
 - **Stack and blocks:** `MPS`, `MRD`, `MPP`, `ANB`, and `ORB`
 - **Subroutines:** captured Structured Text `CALL P`, subroutine markers, and
@@ -117,7 +117,15 @@ These forms have been exercised by the GX Works teaching programs listed in
 observed in downloads; similarly named variants with different operand types
 may still require additional decoding.
 
-Not yet implemented includes `PLF`, `MC`/`MCR`, `INV`, `ZCP`, double-word and
+**`PLF` is the one exception.** Its prefix word is inferred from where PLF
+falls in the basic-instruction ordering, not captured from a download, so it
+is the only encoding here not confirmed against real GX Works output. The
+decoder honours the prefix only when a pulse coil actually follows it, so a
+wrong inference is reported as an unknown opcode rather than executed as
+something else — but a `PLF` that does not fire is worth checking against the
+diagnostic dump before assuming the ladder is at fault.
+
+Not yet implemented includes `MC`/`MCR`, `INV`, `ZCP`, double-word and
 pulse variants of the applied instructions, and generic IEC function-block
 execution beyond the compiler-inlined forms observed in validated downloads.
 

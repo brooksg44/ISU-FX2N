@@ -15,6 +15,10 @@
 #define OPC_OR_X 0x64
 #define OPC_OUT_Y 0xC5
 #define OPC_SET_S 0xD0
+#define OPC_MISC 0x00
+#define OPC_PLS_M 0x88
+#define MISC_PLS_PREFIX 0x08
+#define MISC_PLF_PREFIX 0x09
 
 static int failures;
 static int checks;
@@ -23,7 +27,18 @@ static uint16_t last_timer_preset;
 static bool last_timer_enable;
 static uint16_t last_timer_reset;
 
-/* plc_exec links against these scan services; STL tests do not use time. */
+static bool first_scan;
+
+/* plc_exec links against these scan services; STL tests do not use time.
+ * On the target plc_scan_end() clears the first-scan flag once the scan has
+ * run, so a freshly loaded program sees exactly one first scan. Clearing it
+ * here reproduces that, which is what keeps each test's pulse edge memory
+ * independent of the test before it. */
+bool plc_scan_is_first(void) {
+    bool was_first = first_scan;
+    first_scan = false;
+    return was_first;
+}
 void plc_timer_drive(uint16_t idx, uint16_t preset, bool enable) {
     last_timer_idx = idx;
     last_timer_preset = preset;
@@ -57,6 +72,9 @@ static void check(const char *what, long expected, long actual) {
 }
 
 static void load_program(const uint16_t *words, size_t count) {
+    /* A download stops the PLC, so the scan that follows one is always a
+     * first scan. */
+    first_scan = true;
     plc_program_init();
     for (size_t i = 0; i < count; i++) {
         uint32_t off = PLC_CODE_OFFSET + (uint32_t)i * 2;
@@ -590,6 +608,171 @@ static void test_iec_timer_compiler_forms(void) {
           plc_exec_unknown_count());
 }
 
+/*
+ * PLS fires for one scan on a rising rung. The regression this guards is a
+ * pulse derived from the destination device instead of the rung, which made a
+ * held-true rung toggle the coil on and off every scan forever.
+ */
+static void test_pls_pulses_once_per_rising_edge(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_PLS_PREFIX), W(OPC_PLS_M, 0),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+
+    plc_set_x(0, true);
+    plc_exec_scan();
+    check("PLS fires on the rising edge", 1, plc_get_m(0));
+    check("PLS decodes cleanly", 0, plc_exec_unknown_count());
+
+    plc_exec_scan();
+    check("PLS clears while the rung stays true", 0, plc_get_m(0));
+    plc_exec_scan();
+    check("PLS does not re-fire on a held rung", 0, plc_get_m(0));
+    plc_exec_scan();
+    check("PLS still quiet after four scans", 0, plc_get_m(0));
+
+    plc_set_x(0, false);
+    plc_exec_scan();
+    check("PLS stays off on the falling edge", 0, plc_get_m(0));
+
+    plc_set_x(0, true);
+    plc_exec_scan();
+    check("PLS fires again on the next rising edge", 1, plc_get_m(0));
+    plc_exec_scan();
+    check("second pulse is also one scan long", 0, plc_get_m(0));
+}
+
+/* Each PLS keeps its own edge history, so one held rung cannot suppress or
+ * trigger a pulse elsewhere in the program. */
+static void test_pls_instances_are_independent(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_PLS_PREFIX), W(OPC_PLS_M, 0),
+        W(OPC_LD_X, 1), W(OPC_MISC, MISC_PLS_PREFIX), W(OPC_PLS_M, 1),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+
+    plc_set_x(0, true);
+    plc_exec_scan();
+    check("first PLS fires", 1, plc_get_m(0));
+    check("second PLS idle", 0, plc_get_m(1));
+
+    plc_exec_scan();
+    plc_set_x(1, true);
+    plc_exec_scan();
+    check("second PLS fires on its own edge", 1, plc_get_m(1));
+    check("first PLS unaffected by the second", 0, plc_get_m(0));
+}
+
+/* Edge memory is per program step, so a downloaded program that reuses a step
+ * for something else must not inherit the previous program's history. The
+ * STOP -> RUN first scan is where that memory is discarded. */
+static void test_pls_edge_memory_clears_on_first_scan(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_PLS_PREFIX), W(OPC_PLS_M, 0),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+
+    plc_set_x(0, true);
+    plc_exec_scan();
+    plc_exec_scan();
+    check("pulse consumed before the restart", 0, plc_get_m(0));
+
+    first_scan = true;
+    plc_exec_scan();
+    check("first scan after RUN pulses a rung that was already true", 1,
+          plc_get_m(0));
+}
+
+/*
+ * PLF is the falling-edge counterpart of PLS: one scan when the rung drops.
+ * Its 0x0009 prefix is inferred from the basic-instruction ordering rather
+ * than captured from a download, so these checks pin the behaviour the
+ * inference is expected to produce.
+ */
+static void test_plf_pulses_once_per_falling_edge(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_PLF_PREFIX), W(OPC_PLS_M, 0),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+
+    plc_exec_scan();
+    check("PLF does not fire on a rung that was never true", 0, plc_get_m(0));
+    check("PLF decodes cleanly", 0, plc_exec_unknown_count());
+
+    plc_set_x(0, true);
+    plc_exec_scan();
+    check("PLF stays off on the rising edge", 0, plc_get_m(0));
+    plc_exec_scan();
+    check("PLF stays off while the rung is held", 0, plc_get_m(0));
+
+    plc_set_x(0, false);
+    plc_exec_scan();
+    check("PLF fires on the falling edge", 1, plc_get_m(0));
+    plc_exec_scan();
+    check("PLF clears after one scan", 0, plc_get_m(0));
+    plc_exec_scan();
+    check("PLF does not re-fire while the rung stays false", 0, plc_get_m(0));
+
+    plc_set_x(0, true);
+    plc_exec_scan();
+    plc_set_x(0, false);
+    plc_exec_scan();
+    check("PLF fires again on the next falling edge", 1, plc_get_m(0));
+}
+
+/* PLS and PLF are independent instructions on the same device: a full
+ * off-on-off cycle pulses each of them exactly once. */
+static void test_pls_and_plf_split_a_rung_cycle(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_PLS_PREFIX), W(OPC_PLS_M, 0),
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_PLF_PREFIX), W(OPC_PLS_M, 1),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+
+    plc_set_x(0, true);
+    plc_exec_scan();
+    check("rising edge pulses PLS only", 1, plc_get_m(0));
+    check("PLF silent on the rising edge", 0, plc_get_m(1));
+
+    plc_set_x(0, false);
+    plc_exec_scan();
+    check("falling edge pulses PLF only", 1, plc_get_m(1));
+    check("PLS silent on the falling edge", 0, plc_get_m(0));
+    check("mixed pulse forms decode cleanly", 0, plc_exec_unknown_count());
+}
+
+/*
+ * The PLF prefix is inferred, so it must not consume the following word
+ * unless that word really is a pulse coil. A prefix followed by anything else
+ * is reported as unknown, which is what will expose the guess if 0x09 turns
+ * out to mean something different.
+ */
+static void test_pulse_prefix_without_device_word_is_reported(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_PLF_PREFIX), W(OPC_OUT_Y, 0),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_x(0, true);
+
+    plc_exec_scan();
+    check("stray pulse prefix is counted", 1, plc_exec_unknown_count());
+    check("stray pulse prefix names itself", W(OPC_MISC, MISC_PLF_PREFIX),
+          plc_exec_last_bad_opcode());
+    check("following coil still executes normally", 1, plc_get_y(0));
+}
+
 int main(void) {
     test_inactive_step_is_gated();
     test_transfer_and_handover();
@@ -610,6 +793,12 @@ int main(void) {
     test_fsm_counter_structured_operands_and_bon();
     test_orb_stack_clears_between_rungs();
     test_iec_timer_compiler_forms();
+    test_pls_pulses_once_per_rising_edge();
+    test_pls_instances_are_independent();
+    test_pls_edge_memory_clears_on_first_scan();
+    test_plf_pulses_once_per_falling_edge();
+    test_pls_and_plf_split_a_rung_cycle();
+    test_pulse_prefix_without_device_word_is_reported();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
