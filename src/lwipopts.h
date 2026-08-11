@@ -2,8 +2,8 @@
  * lwipopts.h - lwIP configuration for the Modbus TCP slave.
  *
  * NO_SYS mode with no threads: lwIP runs from cyw43_arch_poll() inside the PLC
- * scan loop, exactly where the RTU port and the GX Works link are already
- * serviced. That keeps the one rule this firmware is built around - devices
+ * scan loop, exactly where the GX Works link is already serviced. That keeps
+ * the one rule this firmware is built around - devices
  * are read, the program runs against a snapshot, then communications happen -
  * and it avoids needing any locking around the device image.
  *

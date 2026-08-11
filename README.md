@@ -38,7 +38,7 @@ outputs *descend* — this is a property of the trainer wiring, not a mistake.
 | Analog AI0–AI2 | 28, 27, 26 | D8030–D8032, raw 0–4095 |
 | sts0 | 2 | RUN indicator |
 | sts1 | 3 | communications diagnostic |
-| Modbus TX/RX | 0, 1 | Modbus RTU slave |
+| reserve | 0, 1 | free since Modbus moved to TCP |
 | reserve | 4, 5 | unused |
 
 **Both banks are active-HIGH.** A pushbutton connects 3.3 V to an input pin;
@@ -129,10 +129,7 @@ reported in the diagnostic dump, naming the opcode.
 
 ---
 
-## Modbus RTU
-
-A Modbus RTU slave runs on **GPIO0/GPIO1** at 9600 8N1, address 1. It is
-independent of the GX Works link, which uses USB.
+## Modbus device map
 
 A real FX2N has no Modbus at all — Mitsubishi added it with the FX3U's `ADPRW`
 instruction — so this mapping is **this project's own convention**, chosen so
@@ -160,10 +157,12 @@ rather than silently reading zero.
 
 ## Modbus TCP
 
-The same device map is served over Wi-Fi on **port 502**, so a client can use
-either transport without knowing which. Only the framing differs — a length
-field and a transaction id instead of a checksum and a silent gap — and both
-share one request handler.
+The map above is served over Wi-Fi on **port 502**.
+
+An RTU slave on GPIO0/GPIO1 came first and has been removed. It was only ever
+reachable from a second trainer — the pins are TTL, not RS-232 or RS-485 — so
+it could not be tested against ordinary Modbus tooling, while a network client
+can be. GPIO0/GPIO1 are now free.
 
 Provision the trainer once with its network, over the same USB console the
 `?` dump uses:
@@ -273,7 +272,10 @@ Hardware-specific code is confined to as few files as possible.
 | `fx_addr.c/.h` | protocol address ↔ device mapping | **yes** |
 | `fx_protocol.c/.h` | GX Works framing over USB CDC | no |
 | `modbus_map.c/.h` | Modbus address ↔ device mapping | **yes** |
-| `modbus.c/.h` | Modbus RTU framing over UART0 | no |
+| `modbus_pdu.c/.h` | Modbus request handling and MBAP framing | **yes** |
+| `modbus_tcp.c/.h` | lwIP listener on port 502 | no |
+| `net.c/.h` | Wi-Fi bring-up | no |
+| `wifi_config.c/.h` | console provisioning command | **yes** |
 | `main.c` | wiring and the scan loop | no |
 
 ---

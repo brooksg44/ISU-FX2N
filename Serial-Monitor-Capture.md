@@ -16,7 +16,7 @@ The obvious way to debug a serial protocol is to print each frame as it
 arrives. That is impossible here: **USB CDC carries the protocol itself**.
 A `printf` mid-session would inject bytes into the same stream GX Works is
 reading and corrupt the frame in flight. There is also no second serial port
-to spare — GPIO0/GPIO1 are the Modbus port.
+to spare — the trainer exposes no RS-232 or RS-485, only TTL on GPIO0/GPIO1.
 
 So the tracer does the opposite. It captures frames into a RAM ring buffer
 while the link is live and stays completely silent, then prints the whole

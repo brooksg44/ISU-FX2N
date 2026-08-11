@@ -99,7 +99,12 @@ static const uint8_t min_len[] = { [0x01]=8, [0x02]=8, [0x03]=8, [0x04]=8,
 and for 0x0F/0x10 require `len >= 9 + bytes`. Return
 `MB_EX_ILLEGAL_VALUE` otherwise.
 
-### 1.3 Broadcast writes are documented as acted on, but are dropped — `src/modbus.c:239`
+### 1.3 Broadcast writes are documented as acted on, but are dropped — MOOT
+
+*Withdrawn rather than fixed. `src/modbus.c` has been deleted: Modbus is served
+over TCP, which has no broadcast. The account below is kept because the defect
+was real for as long as the RTU port existed.*
+
 
 ```c
 /* Address 0 is a broadcast: act on it, but never reply. */

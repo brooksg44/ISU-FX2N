@@ -18,7 +18,6 @@ add_executable(ISU-FX2N
     src/plc_program.c
     src/plc_storage.c
     src/plc_exec.c
-    src/modbus.c
     src/modbus_map.c
     src/modbus_pdu.c
     src/wifi_config.c
@@ -31,15 +30,16 @@ target_link_libraries(ISU-FX2N
     pico_stdlib
     hardware_adc
     hardware_flash
-    hardware_uart
     # Poll mode, not threadsafe_background: lwIP is serviced from the scan loop
-    # alongside the GX Works link and the RTU port, so the device image is only
-    # ever touched from one context and needs no locking.
+    # alongside the GX Works link, so the device image is only ever touched
+    # from one context and needs no locking.
     pico_cyw43_arch_lwip_poll
 )
 
-# GX Works 2 talks to the PLC over USB CDC, so stdio must not claim UART0 -
-# GPIO0/1 are reserved for the Modbus RTU port.
+# GX Works 2 talks to the PLC over USB CDC, so stdio must not claim UART0.
+# GPIO0/1 are free again now that Modbus is served over TCP, but putting stdio
+# there would need a USB-TTL adapter to read, and the '?' dump already arrives
+# over the CDC link that every trainer has.
 pico_enable_stdio_usb(ISU-FX2N 1)
 pico_enable_stdio_uart(ISU-FX2N 0)
 
