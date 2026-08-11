@@ -5,9 +5,11 @@ build/*
 
 # Compiled host test binaries
 tests/test_fx_addr
+tests/test_plc_memory
 tests/test_modbus_map
 tests/test_fx_monitor
 tests/test_plc_exec
+tests/test_modbus_pdu
 tests/test_wifi_config
 
 # Vendor reference manuals: kept locally, not redistributable

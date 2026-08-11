@@ -58,9 +58,16 @@ Note that `tests/test_plc_exec.c` had 20 test functions and none exercised
 `PLS` — the encoding was described in `plc_exec.h` but never executed by the
 suite, which is why a comment asserting the wrong behaviour went unchallenged.
 
-### 1.2 Modbus handlers read fields the frame may not contain — `src/modbus.c:230`
+### 1.2 Modbus handlers read fields the frame may not contain — FIXED
 
-`modbus_task()` validates only `len < 4` and the CRC before dispatching. Every
+*Resolved. Request handling moved to `src/modbus_pdu.c`, which takes the
+request length as an argument and uses it: anything shorter than the six-byte
+fixed part is refused, and `payload_fits()` bounds the two multi-write payload
+loops. Covered by 28 checks in `tests/test_modbus_pdu.c`, including the
+over-long byte count described below. The account is kept as the record of what
+was wrong.*
+
+`modbus_task()` validated only `len < 4` and the CRC before dispatching. Every
 handler in `handle_frame()` then reads `rx[2]` through `rx[5]` unconditionally.
 A four-byte frame `[addr][func][crc][crc]` passes both checks, and
 `handle_read_words()` (`src/modbus.c:91`) reads its start address and count out

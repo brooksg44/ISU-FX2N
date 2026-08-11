@@ -30,6 +30,11 @@ cc $CFLAGS test_modbus_map.c ../src/modbus_map.c ../src/plc_memory.c \
     -o test_modbus_map
 ./test_modbus_map
 
+echo "== Modbus request handling =="
+cc $CFLAGS test_modbus_pdu.c ../src/modbus_pdu.c ../src/modbus_map.c \
+    ../src/plc_memory.c -o test_modbus_pdu
+./test_modbus_pdu
+
 echo "== Wi-Fi provisioning command =="
 cc $CFLAGS test_wifi_config.c ../src/wifi_config.c -o test_wifi_config
 ./test_wifi_config
