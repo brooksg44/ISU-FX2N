@@ -19,6 +19,16 @@
 #define OPC_PLS_M 0x88
 #define MISC_PLS_PREFIX 0x08
 #define MISC_PLF_PREFIX 0x09
+#define MISC_DMOV 0x29
+
+/* Typed operand pairs, as captured: the low word carries the operand type and
+ * the low byte of the byte-address, the high word the type and the high byte.
+ * Registers are addressed by byte, hence the doubling - D28 is 0x8638 0x8000. */
+#define OPD_CONST(v) \
+    (uint16_t)(0x8000u | ((v) & 0xFFu)), (uint16_t)(0x8000u | (((v) >> 8) & 0xFFu))
+#define OPD_D(n)                                        \
+    (uint16_t)(0x8600u | (((n) * 2u) & 0xFFu)),         \
+        (uint16_t)(0x8000u | ((((n) * 2u) >> 8) & 0xFFu))
 
 static int failures;
 static int checks;
@@ -773,6 +783,98 @@ static void test_pulse_prefix_without_device_word_is_reported(void) {
     check("following coil still executes normally", 1, plc_get_y(0));
 }
 
+/*
+ * DMOV, the instruction the FX2NC-ENET-ADP parameter block is written with:
+ *
+ *   M8002 -- DMOV H454E4554 D1000   header "ENET"
+ *         -- DMOV HC0A8006E D1002   IP address 192.168.0.110
+ *
+ * Each 32-bit operand is two typed operand pairs, low word first.
+ */
+static void test_dmov_writes_a_32_bit_constant(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_DMOV),
+        OPD_CONST(0x4554), OPD_CONST(0x454E), /* "ENET" */
+        OPD_D(1000), OPD_CONST(0),            /* captured zero padding */
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_x(0, true);
+
+    plc_exec_scan();
+
+    check("DMOV writes the low word first", 0x4554, plc_get_d(1000));
+    check("DMOV writes the high word second", 0x454E, plc_get_d(1001));
+    check("DMOV has no unknown opcode", 0, plc_exec_unknown_count());
+}
+
+/*
+ * The same move with the high half of the destination named outright rather
+ * than padded with zero. D1001 is dirtied first: reading that operand as a
+ * value would see 0xFFFF, reject the instruction, and leave D1000 unwritten -
+ * which is exactly how this would fail on any scan after the first.
+ */
+static void test_dmov_accepts_a_named_high_register(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_DMOV),
+        OPD_CONST(0x006E), OPD_CONST(0xC0A8), /* 192.168.0.110 */
+        OPD_D(1002), OPD_D(1003),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_x(0, true);
+    plc_set_d(1003, 0xFFFF);
+
+    plc_exec_scan();
+
+    check("named high register still writes the low word", 0x006E, plc_get_d(1002));
+    check("named high register overwrites dirty contents", 0xC0A8, plc_get_d(1003));
+    check("named high register is not an unknown opcode", 0,
+          plc_exec_unknown_count());
+}
+
+static void test_dmov_copies_a_register_pair(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_DMOV),
+        OPD_D(0), OPD_D(1),
+        OPD_D(10), OPD_CONST(0),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_x(0, true);
+    plc_set_d32(0, 0x12345678u);
+
+    plc_exec_scan();
+
+    check("DMOV copies a 32-bit register pair", 0x5678, plc_get_d(10));
+    check("DMOV copies the source high word", 0x1234, plc_get_d(11));
+}
+
+/*
+ * Admitting a named high register must not admit an arbitrary one. Only
+ * dst + 1 is a 32-bit destination; anything else is a decode the guess got
+ * wrong, and has to name itself rather than write somewhere unintended.
+ */
+static void test_dmov_rejects_a_mismatched_high_register(void) {
+    static const uint16_t program[] = {
+        W(OPC_LD_X, 0), W(OPC_MISC, MISC_DMOV),
+        OPD_CONST(0x1111), OPD_CONST(0x2222),
+        OPD_D(1000), OPD_D(1005),
+        W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_x(0, true);
+
+    plc_exec_scan();
+
+    check("mismatched high register is counted", 1, plc_exec_unknown_count());
+    check("mismatched high register writes nothing", 0, plc_get_d(1000));
+}
+
 int main(void) {
     test_inactive_step_is_gated();
     test_transfer_and_handover();
@@ -799,6 +901,10 @@ int main(void) {
     test_plf_pulses_once_per_falling_edge();
     test_pls_and_plf_split_a_rung_cycle();
     test_pulse_prefix_without_device_word_is_reported();
+    test_dmov_writes_a_32_bit_constant();
+    test_dmov_accepts_a_named_high_register();
+    test_dmov_copies_a_register_pair();
+    test_dmov_rejects_a_mismatched_high_register();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

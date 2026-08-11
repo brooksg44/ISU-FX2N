@@ -63,7 +63,17 @@
 #define MISC_END 0x0F
 #define MISC_FEND 0x1C /* program body terminator emitted before END */
 #define MISC_MOV 0x28 /* followed by two typed operand pairs */
-#define MISC_MOV_TIME 0x29 /* captured 32-bit TIME move used by IEC FBs */
+/*
+ * DMOV - the 32-bit form of MOV. Applied instructions sit at 0x10 + 2 * FNC,
+ * so MOV (FNC 12) is 0x28 and the odd neighbour is its double-word form. DIV
+ * and DDIV below repeat the pattern at 0x3E/0x3F, which is what makes the odd
+ * slot a rule rather than a coincidence.
+ *
+ * It was first captured as the 32-bit TIME move inside the IEC timer function
+ * blocks; nothing about the encoding is TIME-specific. Each 32-bit operand is
+ * two typed operand pairs, low word first.
+ */
+#define MISC_DMOV 0x29
 #define MISC_CMP 0x24
 #define MISC_BMOV 0x2E
 #define MISC_FMOV 0x30
@@ -232,6 +242,27 @@ static bool word_operand_register(uint16_t lo, uint16_t hi, uint16_t *reg) {
     return true;
 }
 
+/*
+ * Second half of a 32-bit destination. Two shapes are accepted, because the
+ * two are distinguishable by operand type and only one of them is captured:
+ *
+ *   const 0      the IEC timer FBs emit this as padding - captured, see the
+ *                MISC_DMOV note
+ *   D(dst + 1)   the high register named outright
+ *
+ * The second is inferred rather than captured. It is admitted because reading
+ * it as a value instead would return the register's live contents: zero at
+ * boot and non-zero afterwards, so the instruction would work on the first
+ * scan and then quietly stop.
+ */
+static bool destination_high_word(uint16_t lo, uint16_t hi, uint16_t dst) {
+    uint16_t reg, value;
+    if (word_operand_register(lo, hi, &reg)) {
+        return reg == (uint16_t)(dst + 1u);
+    }
+    return read_word_operand(lo, hi, &value) && value == 0;
+}
+
 static bool fetch_word_value(uint32_t *off, uint16_t *value) {
     uint16_t lo = fetch(*off), hi = fetch(*off + 2);
     *off += 4;
@@ -381,18 +412,18 @@ static bool execute_applied(uint16_t instruction, uint32_t *off, bool enabled) {
     bool valid = true;
 
     switch (instruction) {
-        case MISC_MOV_TIME:
+        case MISC_DMOV:
         {
             uint16_t s0_lo = fetch(*off), s0_hi = fetch(*off + 2);
             uint16_t s1_lo = fetch(*off + 4), s1_hi = fetch(*off + 6);
             uint16_t d0_lo = fetch(*off + 8), d0_hi = fetch(*off + 10);
             uint16_t d1_lo = fetch(*off + 12), d1_hi = fetch(*off + 14);
-            uint16_t value_lo, value_hi, padding;
+            uint16_t value_lo, value_hi;
             *off += 16;
             valid = read_word_operand(s0_lo, s0_hi, &value_lo) &&
                     read_word_operand(s1_lo, s1_hi, &value_hi) &&
                     word_operand_register(d0_lo, d0_hi, &dst) &&
-                    read_word_operand(d1_lo, d1_hi, &padding) && padding == 0 &&
+                    destination_high_word(d1_lo, d1_hi, dst) &&
                     dst + 1u < PLC_NUM_D;
             if (valid && enabled) {
                 plc_set_d32(dst, (uint32_t)value_lo | ((uint32_t)value_hi << 16));

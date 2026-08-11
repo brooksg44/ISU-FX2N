@@ -113,6 +113,7 @@ The current runtime supports the following relevant core operations:
 - `STL`, `RET`, and deferred STL state transfers
 - timer and counter coils with constant presets
 - a limited `MOV` form using constants and D registers
+- `DMOV`, its 32-bit form, at `0x0029`
 - `END`
 
 ### The `PLF` encoding
@@ -138,6 +139,31 @@ A pulse prefix is honoured only when the following word is a pulse coil (op
 nibble `8`, excluding the `0x80` constant marker). Anything else is counted
 and reported as an unknown opcode rather than left pending, so a misread
 prefix cannot attach itself to a genuine pulse coil further down the program.
+
+### The `DMOV` encoding
+
+Applied instructions sit at `0x10 + 2 * FNC`, so `MOV` (FNC 12) is `0x0028`
+and its 32-bit form takes the odd slot at `0x0029`. `DIV`/`DDIV` repeat the
+pattern at `0x003E`/`0x003F`, which is what makes the odd slot a rule rather
+than a coincidence.
+
+`0x0029` was first captured as the 32-bit `TIME` move inside the IEC timer
+function blocks, but nothing in the encoding is `TIME`-specific: each 32-bit
+operand is two typed operand pairs, low word first.
+
+One detail is **inferred, not captured**. In the IEC capture the second half
+of the destination is a constant `0` used as padding. A hand-written
+`DMOV H454E4554 D1000` should instead name `D1001` there, so both shapes are
+accepted — they are distinguishable by operand type, and a named register is
+only accepted when it is exactly `dst + 1`.
+
+Reading that operand as a *value*, which is what the original capture-shaped
+decode did, is the trap worth recording: a `D` operand returns the register's
+live contents, so the instruction would pass while `D1001` still held zero and
+silently fail on every scan after something wrote to it.
+
+This matters because the FX2NC-ENET-ADP parameter block is written with
+`DMOV` — see the network configuration notes.
 
 The following are known or likely gaps for the supplied project:
 
