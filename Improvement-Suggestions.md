@@ -248,7 +248,11 @@ which is already a single choke point (`plc_program_write`).
 The comments in this repo are unusually good, which makes the stale ones
 unusually costly — they are written with enough authority to be believed.
 
-### 4.1 `README.md` contradicts itself about RUN/STOP, three ways
+### 4.1 `README.md` contradicts itself about RUN/STOP, three ways — FIXED
+
+*Resolved. All three passages now say the same thing: RUN/STOP is controlled
+only from Online → Remote Operation, and no trainer input is reserved for it.
+The account below is kept as the record of what was wrong.*
 
 - `README.md:48` — "**I9 toggles RUN/STOP.** … so I9 stands in."
 - `README.md:81` — "All ten physical trainer inputs remain available to the user
@@ -273,7 +277,11 @@ Online → Remote Operation → RUN. If local RUN/STOP is still wanted, implemen
 it is ~5 lines in `main.c` — but note it would then conflict with `README.md:81`,
 so pick one and say so.
 
-### 4.2 `README.md` describes an automatic diagnostic dump that was removed
+### 4.2 `README.md` describes an automatic diagnostic dump that was removed — FIXED
+
+*Resolved. The Diagnostics section is rewritten around the bare `?` command and
+says why there is no automatic dump. The empty `fx_protocol_idle_dump()` and its
+`main.c` call site are still there and can still go.*
 
 `README.md:167` — "When the link has been idle for 2 s, the firmware prints a
 diagnostic report over USB CDC every 3 s". `fx_protocol_idle_dump()`
@@ -395,7 +403,8 @@ simultaneously, which is what a two-trainer teaching exercise actually wants.
 | # | Item | Severity | Effort |
 |---|---|---|---|
 | 1.1 | ~~`PLS` oscillates instead of pulsing~~ **fixed** | High — wrong results | done |
-| 4.1 | README's I9 RUN/STOP instructions do not work | High — blocks quick start | Low |
+| 4.1 | ~~README's I9 RUN/STOP instructions do not work~~ **fixed** | High — blocks quick start | done |
+| 4.2 | ~~README describes a removed automatic dump~~ **fixed** | Low | done |
 | 1.2 | Modbus reads unvalidated / out-of-bounds frame fields | Medium — can drive outputs from garbage | Low |
 | 2.2 | Scan cycle (timers/counters) has no tests | Medium — hides future regressions | Medium |
 | 1.5 | Flash commit can interrupt a live Monitor session | Medium | Low |
@@ -403,8 +412,8 @@ simultaneously, which is what a two-trainer teaching exercise actually wants.
 | 1.3 | Broadcast writes silently dropped | Low | Low |
 | 1.4 | Block stack saturates on wide rungs | Low | Low |
 | 3.1, 3.2 | Per-scan linear scans of program memory | Low | Low |
-| 4.2–4.5 | Stale comments and leftover debug output | Low | Low |
+| 4.3–4.5 | Stale comments and leftover debug output | Low | Low |
 | 2.3 | No CI | Low | Low |
 
-Of the two a student hits on their first afternoon with the trainer, **1.1** is
-fixed; **4.1** is documentation and still open.
+Both of the items a student hits on their first afternoon with the trainer —
+**1.1** and **4.1** — are now fixed.

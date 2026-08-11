@@ -166,14 +166,23 @@ rather than silently reading zero.
 | dark | no protocol error |
 | 0.5 s pulse | a frame was rejected |
 
-**Serial dump.** When the link has been idle for 2 s, the firmware prints a
-diagnostic report over USB CDC every 3 s: PLC identity, memory capacity,
-whether a program is loaded, unknown-opcode count, a program memory hex dump,
-and the last 12 non-routine protocol frames.
+**Serial dump.** Send a bare `?` over USB CDC and the firmware prints a
+diagnostic report: PLC identity, memory capacity, whether a program is loaded,
+unknown-opcode count, a program memory hex dump, and the last 12 non-routine
+protocol frames.
 
 GX Works and a terminal cannot share the COM port. To read the dump, close
 GX Works first — **without unplugging the Pico**, since the trace lives in RAM.
 Any terminal works; baud rate is irrelevant over USB CDC.
+
+The dump happens only when asked for. There is no automatic one: GX Works
+briefly closes and reopens the COM port between download and Monitor Mode, and
+text queued during that gap arrives where the next handshake expects `ACK`,
+which stops Monitor Mode from starting.
+
+[`Serial-Monitor-Capture.md`](Serial-Monitor-Capture.md) explains the frame
+tracer in full — what it keeps, what it discards, and how to read a captured
+frame. Recordings made with it are in [`captures/`](captures/).
 
 ---
 
@@ -233,10 +242,8 @@ the single most important idea to take from this source. See `plc_scan.h`.
 
 ## Known limitations
 
-- **Diagnostics are request-only.** Disconnect GX Works, open a serial
-  terminal, and send a bare `?`. Automatic idle dumps are disabled because GX
-  Works briefly closes and reopens the COM port between download and Monitor
-  Mode; output queued during that gap corrupts the next protocol handshake.
+- **Diagnostics are request-only**, and need GX Works disconnected first — see
+  [Diagnostics](#diagnostics) above.
 - **Live ladder monitoring refreshes slowly.** GX Works polls the packed
   monitor buffer about once every 2.8 seconds over this serial connection, so
   X, Y, S and M changes animate correctly but are not immediate. The monitor
