@@ -42,23 +42,24 @@ containing `CMakeLists.txt`—and update it as appropriate before building.
 ## 3. Install the Raspberry Pi Pico SDK
 
 This project has been verified with Pico SDK 2.3.0. Keep the SDK outside the
-ISU-FX2N repository:
+ISU-FX2N repository. On the machine this firmware is built on it lives in the
+home directory, not beside the repository:
 
 ```sh
-cd ..
-git clone --branch 2.3.0 --depth 1 https://github.com/raspberrypi/pico-sdk.git
-git -C pico-sdk submodule update --init --recursive
-cd ISU-FX2N
+git clone --branch 2.3.0 --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+git -C ~/pico-sdk submodule update --init --recursive
 ```
 
-Set `PICO_SDK_PATH` to its absolute location. For example:
+Set `PICO_SDK_PATH` to its absolute location:
 
 ```sh
-export PICO_SDK_PATH="$PWD/../pico-sdk"
+export PICO_SDK_PATH="$HOME/pico-sdk"
 ```
 
-The `export` applies to the current terminal. Add the same line, with a fixed
-absolute path, to `~/.bashrc` if it should persist across new terminals.
+The `export` applies to the current terminal only, and it is **not** in
+`~/.bashrc`, so it has to be repeated in every new terminal — or passed
+directly to CMake as shown in section 4. Add the line to `~/.bashrc` if it
+should persist.
 
 Alternatively, the included `pico_sdk_import.cmake` can download the SDK while
 configuring:
@@ -143,7 +144,7 @@ The message usually says `SDK location was not specified`. Set an absolute SDK
 path and configure again:
 
 ```sh
-export PICO_SDK_PATH=/absolute/path/to/pico-sdk
+export PICO_SDK_PATH="$HOME/pico-sdk"
 cmake -S . -B build -G Ninja -DPICO_BOARD=pico_w
 ```
 
