@@ -29,4 +29,20 @@
  */
 uint16_t modbus_pdu_exec(const uint8_t *req, uint16_t req_len, uint8_t *resp);
 
+/* MBAP header: transaction id, protocol id, length, unit id. */
+#define MODBUS_TCP_MBAP 7
+#define MODBUS_TCP_ADU_MAX (6 + MODBUS_PDU_MAX)
+
+/*
+ * Executes one complete Modbus TCP frame. `adu` starts at the MBAP header and
+ * `len` is the whole frame - the caller owns reassembly, since TCP delivers a
+ * stream rather than messages.
+ *
+ * Returns the reply length, or 0 for a frame that is not ours to answer: a
+ * non-zero protocol identifier, or a length field disagreeing with what
+ * actually arrived. Neither deserves an exception reply, which would only
+ * confuse a client that is talking some other protocol at us.
+ */
+uint16_t modbus_tcp_adu_exec(const uint8_t *adu, uint16_t len, uint8_t *resp);
+
 #endif /* MODBUS_PDU_H */

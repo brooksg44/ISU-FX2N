@@ -94,6 +94,37 @@ static bool payload_fits(const uint8_t *req, uint16_t req_len, uint16_t *bytes) 
     return (uint32_t)7 + *bytes <= req_len;
 }
 
+uint16_t modbus_tcp_adu_exec(const uint8_t *adu, uint16_t len, uint8_t *resp) {
+    /* Seven header bytes plus a unit identifier and a function code. */
+    if (len < 8) {
+        return 0;
+    }
+    if (be16(&adu[2]) != 0) {
+        return 0; /* protocol identifier says this is not Modbus */
+    }
+    /* The length field counts the unit identifier and everything after it. A
+     * frame whose header disagrees with its own size has been mis-framed, and
+     * answering it would only compound the error. */
+    if (be16(&adu[4]) != (uint16_t)(len - 6)) {
+        return 0;
+    }
+
+    /* From the unit identifier onwards this is exactly an RTU frame without
+     * its checksum, so the same handler serves. */
+    uint16_t n = modbus_pdu_exec(&adu[6], (uint16_t)(len - 6), &resp[6]);
+    if (n == 0) {
+        return 0;
+    }
+
+    resp[0] = adu[0]; /* transaction id, echoed so the client can match */
+    resp[1] = adu[1];
+    resp[2] = 0;
+    resp[3] = 0;
+    resp[4] = (uint8_t)(n >> 8);
+    resp[5] = (uint8_t)(n & 0xFF);
+    return (uint16_t)(6 + n);
+}
+
 uint16_t modbus_pdu_exec(const uint8_t *req, uint16_t req_len, uint8_t *resp) {
     if (req_len < 2) {
         return 0; /* not even a function code to answer about */

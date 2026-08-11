@@ -157,6 +157,33 @@ rather than silently reading zero.
 
 ---
 
+## Modbus TCP
+
+The same device map is served over Wi-Fi on **port 502**, so a client can use
+either transport without knowing which. Only the framing differs — a length
+field and a transaction id instead of a checksum and a silent gap — and both
+share one request handler.
+
+Provision the trainer once with its network, over the same USB console the
+`?` dump uses:
+
+```text
+wifi <ssid> <key>
+```
+
+The credentials are stored in flash and survive a power cycle. The address is
+obtained by DHCP; send `?` to see it, along with the link state and the
+connection and request counts.
+
+Until a trainer is provisioned the radio never starts, so the published
+firmware costs nothing to anyone not using the network.
+
+**There is no authentication.** Modbus TCP has none to offer: anything that can
+reach port 502 can write any coil or register, which on a trainer means it can
+switch outputs. Keep these on a lab network.
+
+---
+
 ## Diagnostics
 
 **sts1 (GPIO3)** is the programming-protocol error indicator:

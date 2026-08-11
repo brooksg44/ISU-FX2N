@@ -11,6 +11,8 @@
 #include "plc_storage.h"
 #include "plc_scan.h"
 #include "pico/stdlib.h"
+#include "modbus_tcp.h"
+#include "net.h"
 #include "wifi_config.h"
 
 #define STX 0x02
@@ -552,8 +554,13 @@ static void trace_dump(void) {
      * in captures/, which is in Git. */
     const char *ssid, *key;
     if (plc_storage_wifi_get(&ssid, &key)) {
-        printf("wifi: ssid=%s, key stored (%u chars)\r\n", ssid,
-               (unsigned)strlen(key));
+        static const char *const net_names[] = {"disabled", "failed", "joining",
+                                                "up"};
+        printf("wifi: ssid=%s, key stored (%u chars), link %s\r\n", ssid,
+               (unsigned)strlen(key), net_names[net_state()]);
+        printf("modbus tcp: %s:%u, %u connections, %u requests\r\n",
+               net_address(), MODBUS_TCP_PORT, modbus_tcp_connections(),
+               modbus_tcp_requests());
     } else {
         printf("wifi: not provisioned - send: wifi <ssid> <key>\r\n");
     }

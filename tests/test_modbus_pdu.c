@@ -163,6 +163,87 @@ static void test_enforces_the_quantity_limits(void) {
     check("zero quantity is refused", 0x03, (exec(none_at_all, 6, resp), resp[2]));
 }
 
+/*
+ * Modbus TCP wraps the same PDU in an MBAP header. These check the wrapper
+ * only - the request handling above is shared and already covered.
+ */
+static void test_tcp_wraps_the_same_request(void) {
+    uint8_t resp[MODBUS_TCP_ADU_MAX];
+    /* txn 0x1234, proto 0, length 6, unit 1, write 0x1234 to holding 100 */
+    const uint8_t adu[] = {0x12, 0x34, 0x00, 0x00, 0x00, 0x06,
+                           UNIT, 0x06, 0x00, 0x64, 0x12, 0x34};
+
+    plc_memory_init();
+    memset(resp, 0, sizeof resp);
+
+    check("tcp reply is header plus echoed request", 12,
+          modbus_tcp_adu_exec(adu, sizeof adu, resp));
+    check("tcp write reaches D100", 0x1234, plc_get_d(100));
+    check("transaction id high byte is echoed", 0x12, resp[0]);
+    check("transaction id low byte is echoed", 0x34, resp[1]);
+    check("protocol id is zero", 0, (resp[2] << 8) | resp[3]);
+    check("length counts the unit id and the pdu", 6, (resp[4] << 8) | resp[5]);
+    check("unit id is echoed", UNIT, resp[6]);
+    check("function code is echoed", 0x06, resp[7]);
+}
+
+/* The length field is what a client uses to find frame boundaries, so a reply
+ * that miscounts desynchronises the stream for every frame after it. */
+static void test_tcp_length_matches_a_variable_reply(void) {
+    uint8_t resp[MODBUS_TCP_ADU_MAX];
+    /* read 16 coils from 0 -> unit + code + count + 2 data bytes */
+    const uint8_t adu[] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x06,
+                           UNIT, 0x01, 0x00, 0x00, 0x00, 0x10};
+
+    plc_memory_init();
+    plc_set_y(0, true);
+
+    check("coil read reply is header plus five", 11,
+          modbus_tcp_adu_exec(adu, sizeof adu, resp));
+    check("coil read length field counts five", 5, (resp[4] << 8) | resp[5]);
+    check("coil read data survives the wrapper", 0x01, resp[9]);
+}
+
+static void test_tcp_exception_is_still_framed(void) {
+    uint8_t resp[MODBUS_TCP_ADU_MAX];
+    const uint8_t adu[] = {0x00, 0x07, 0x00, 0x00, 0x00, 0x06,
+                           UNIT, 0x2B, 0x00, 0x00, 0x00, 0x01};
+
+    plc_memory_init();
+
+    check("exception reply is header plus three", 9,
+          modbus_tcp_adu_exec(adu, sizeof adu, resp));
+    check("exception length field counts three", 3, (resp[4] << 8) | resp[5]);
+    check("exception sets the high bit on the function", 0xAB, resp[7]);
+}
+
+/*
+ * A frame that is not Modbus, or that disagrees with its own length, gets no
+ * reply at all. Port 502 attracts scanners, and answering something that never
+ * spoke Modbus is worse than silence.
+ */
+static void test_tcp_refuses_frames_it_should_not_answer(void) {
+    uint8_t resp[MODBUS_TCP_ADU_MAX];
+    const uint8_t wrong_protocol[] = {0x00, 0x01, 0x00, 0x07, 0x00, 0x06,
+                                      UNIT, 0x03, 0x00, 0x00, 0x00, 0x01};
+    const uint8_t length_too_big[] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x40,
+                                      UNIT, 0x03, 0x00, 0x00, 0x00, 0x01};
+    const uint8_t length_too_small[] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x03,
+                                        UNIT, 0x03, 0x00, 0x00, 0x00, 0x01};
+    const uint8_t header_only[] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x01, UNIT};
+
+    plc_memory_init();
+
+    check("non-zero protocol id gets no reply", 0,
+          modbus_tcp_adu_exec(wrong_protocol, sizeof wrong_protocol, resp));
+    check("length longer than the frame gets no reply", 0,
+          modbus_tcp_adu_exec(length_too_big, sizeof length_too_big, resp));
+    check("length shorter than the frame gets no reply", 0,
+          modbus_tcp_adu_exec(length_too_small, sizeof length_too_small, resp));
+    check("header without a function code gets no reply", 0,
+          modbus_tcp_adu_exec(header_only, sizeof header_only, resp));
+}
+
 int main(void) {
     test_reads_coils_from_y();
     test_writes_a_holding_register();
@@ -173,6 +254,10 @@ int main(void) {
     test_refuses_a_truncated_coil_payload();
     test_refuses_a_short_request();
     test_enforces_the_quantity_limits();
+    test_tcp_wraps_the_same_request();
+    test_tcp_length_matches_a_variable_reply();
+    test_tcp_exception_is_still_framed();
+    test_tcp_refuses_frames_it_should_not_answer();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

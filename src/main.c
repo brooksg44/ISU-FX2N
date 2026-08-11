@@ -18,6 +18,7 @@
 #include "fx_protocol.h"
 #include "pico/stdlib.h"
 #include "modbus.h"
+#include "net.h"
 #include "plc_exec.h"
 #include "plc_memory.h"
 #include "plc_program.h"
@@ -85,6 +86,7 @@ int main(void) {
     plc_scan_init();
     fx_protocol_init();
     modbus_init(MODBUS_DEFAULT_SLAVE, MODBUS_DEFAULT_BAUD);
+    net_init();
 
     /* No RUN/STOP switch exists on the trainer, so start in RUN. Remote
      * run/stop from GX Works 2 will take over this decision. */
@@ -107,6 +109,7 @@ int main(void) {
          * the PC sees a consistent snapshot rather than a half-updated one. */
         fx_protocol_task();
         modbus_task();
+        net_task();
 
         board_status_led(0, plc_scan_get_mode() == PLC_MODE_RUN);
         update_comms_led();
