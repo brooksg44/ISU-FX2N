@@ -151,16 +151,37 @@ than a coincidence.
 function blocks, but nothing in the encoding is `TIME`-specific: each 32-bit
 operand is two typed operand pairs, low word first.
 
-One detail is **inferred, not captured**. In the IEC capture the second half
-of the destination is a constant `0` used as padding. A hand-written
-`DMOV H454E4554 D1000` should instead name `D1001` there, so both shapes are
-accepted — they are distinguishable by operand type, and a named register is
-only accepted when it is exactly `dst + 1`.
+A Structured Ladder `DMOV` block with `s = 999` and `d = D1000` captures as:
 
-Reading that operand as a *value*, which is what the original capture-shaped
-decode did, is the trap worth recording: a `D` operand returns the register's
-live contents, so the instruction would pass while `D1001` still held zero and
-silently fail on every scan after something wrote to it.
+```text
+2400              LD X0
+0029              DMOV
+80E7 8003         K999, low word
+8000 8000         K999, high word
+86D0 8807         D1000
+8000 8000         padding
+001C              FEND
+```
+
+Two details only the capture settles:
+
+**The destination's high type is `0x88`, not `0x80`.** A 16-bit destination
+carries `OPERAND_CONST` there — `INC D28` is `8638 8000`. A 32-bit one carries
+`OPERAND_POINTER`. `read_bit_operand()` already admits the same marker on bit
+operands in structured POUs, so this is the established pattern rather than a
+special case. Rejecting it was what made a downloaded `DMOV` do nothing at all,
+with `D1000` simply staying at zero and `0x0029` reported as the last unknown
+opcode.
+
+**The second half of the destination really is constant zero padding.** The
+high register is never named, in either the IEC timer capture or this one. An
+earlier revision also accepted `D(dst + 1)` there on the assumption that a
+hand-written `DMOV` would name it; the capture disproves that, and the
+speculation has been removed.
+
+Note that the register address is a *byte* address, so `86D0 8807` is
+`0x07D0` = 2000, which is D1000. That convention is not specific to `DMOV` —
+`INC D28` encodes 28 as `0x38`.
 
 This matters because the FX2NC-ENET-ADP parameter block is written with
 `DMOV` — see the network configuration notes.

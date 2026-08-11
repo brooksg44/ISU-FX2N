@@ -810,29 +810,34 @@ static void test_dmov_writes_a_32_bit_constant(void) {
 }
 
 /*
- * The same move with the high half of the destination named outright rather
- * than padded with zero. D1001 is dirtied first: reading that operand as a
- * value would see 0xFFFF, reject the instruction, and leave D1000 unwritten -
- * which is exactly how this would fail on any scan after the first.
+ * The captured rung, byte for byte, from a Structured Ladder DMOV block:
+ *
+ *   X0 -- DMOV s=999 d=D1000
+ *
+ * The destination pair is 86D0 8807, where the high type is OPERAND_POINTER
+ * rather than the 0x80 a 16-bit destination carries. That difference is what
+ * this test exists to pin down: it was rejecting the whole instruction, and
+ * the only visible symptom on the trainer was D1000 staying at zero.
  */
-static void test_dmov_accepts_a_named_high_register(void) {
+static void test_dmov_decodes_the_captured_structured_rung(void) {
     static const uint16_t program[] = {
-        W(OPC_LD_X, 0), W(OPC_MISC, MISC_DMOV),
-        OPD_CONST(0x006E), OPD_CONST(0xC0A8), /* 192.168.0.110 */
-        OPD_D(1002), OPD_D(1003),
-        W(OPC_END, 0x0F),
+        0x2400,                 /* LD X0 */
+        0x0029,                 /* DMOV */
+        0x80E7, 0x8003,         /* K999, low word */
+        0x8000, 0x8000,         /* K999, high word */
+        0x86D0, 0x8807,         /* D1000 */
+        0x8000, 0x8000,         /* zero padding */
+        0x001C,                 /* FEND */
     };
     plc_memory_init();
     load_program(program, sizeof(program) / sizeof(program[0]));
     plc_set_x(0, true);
-    plc_set_d(1003, 0xFFFF);
 
     plc_exec_scan();
 
-    check("named high register still writes the low word", 0x006E, plc_get_d(1002));
-    check("named high register overwrites dirty contents", 0xC0A8, plc_get_d(1003));
-    check("named high register is not an unknown opcode", 0,
-          plc_exec_unknown_count());
+    check("captured DMOV writes 999 to D1000", 999, plc_get_d(1000));
+    check("captured DMOV clears the high word", 0, plc_get_d(1001));
+    check("captured DMOV is not an unknown opcode", 0, plc_exec_unknown_count());
 }
 
 static void test_dmov_copies_a_register_pair(void) {
@@ -854,15 +859,15 @@ static void test_dmov_copies_a_register_pair(void) {
 }
 
 /*
- * Admitting a named high register must not admit an arbitrary one. Only
- * dst + 1 is a 32-bit destination; anything else is a decode the guess got
- * wrong, and has to name itself rather than write somewhere unintended.
+ * The destination's second pair is padding and must be zero. A non-zero value
+ * there means the operand layout is not what was captured, so the instruction
+ * has to name itself rather than write to a register chosen by guesswork.
  */
-static void test_dmov_rejects_a_mismatched_high_register(void) {
+static void test_dmov_rejects_non_zero_padding(void) {
     static const uint16_t program[] = {
         W(OPC_LD_X, 0), W(OPC_MISC, MISC_DMOV),
         OPD_CONST(0x1111), OPD_CONST(0x2222),
-        OPD_D(1000), OPD_D(1005),
+        OPD_D(1000), OPD_CONST(1),
         W(OPC_END, 0x0F),
     };
     plc_memory_init();
@@ -871,8 +876,8 @@ static void test_dmov_rejects_a_mismatched_high_register(void) {
 
     plc_exec_scan();
 
-    check("mismatched high register is counted", 1, plc_exec_unknown_count());
-    check("mismatched high register writes nothing", 0, plc_get_d(1000));
+    check("non-zero padding is counted", 1, plc_exec_unknown_count());
+    check("non-zero padding writes nothing", 0, plc_get_d(1000));
 }
 
 int main(void) {
@@ -902,9 +907,9 @@ int main(void) {
     test_pls_and_plf_split_a_rung_cycle();
     test_pulse_prefix_without_device_word_is_reported();
     test_dmov_writes_a_32_bit_constant();
-    test_dmov_accepts_a_named_high_register();
+    test_dmov_decodes_the_captured_structured_rung();
     test_dmov_copies_a_register_pair();
-    test_dmov_rejects_a_mismatched_high_register();
+    test_dmov_rejects_non_zero_padding();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
