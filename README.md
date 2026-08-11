@@ -119,9 +119,10 @@ These forms have been exercised by the GX Works teaching programs listed in
 observed in downloads; similarly named variants with different operand types
 may still require additional decoding.
 
-Not yet implemented includes `MC`/`MCR`, `INV`, `ZCP`, double-word and
-pulse variants of the applied instructions, and generic IEC function-block
-execution beyond the compiler-inlined forms observed in validated downloads.
+Not yet implemented includes `MC`/`MCR`, `INV`, `ZCP`, pulse variants of the
+applied instructions, and generic IEC function-block execution beyond the
+compiler-inlined forms observed in validated downloads. `DMOV` is the only
+double-word form decoded so far.
 
 An unimplemented instruction does not fail silently — it is counted and
 reported in the diagnostic dump, naming the opcode.
@@ -173,7 +174,12 @@ wifi <ssid> <key>
 
 The credentials are stored in flash and survive a power cycle. The address is
 obtained by DHCP; send `?` to see it, along with the link state and the
-connection and request counts.
+connection and request counts. There is no ladder-side network configuration
+to get right — provisioning and reading back the address happen in the same
+console session.
+
+Reading inputs and writing outputs have been verified against a real client on
+the trainer.
 
 Until a trainer is provisioned the radio never starts, so the published
 firmware costs nothing to anyone not using the network.
@@ -303,9 +309,9 @@ the single most important idea to take from this source. See `plc_scan.h`.
   timer and counter ranges.
 - **Force** works for X, Y, M, S and M8000-range devices. T and C have not been
   located in the force address space and are ignored rather than guessed at.
-- Applied-instruction support is currently limited to the ordinary 16-bit
-  forms listed above; indexed, double-word, and pulse variants remain future
-  work.
+- Applied-instruction support is otherwise limited to the ordinary 16-bit
+  forms listed above; indexed and pulse variants remain future work, and
+  `DMOV` is the only double-word form decoded.
 
 ---
 
