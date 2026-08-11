@@ -815,15 +815,16 @@ static void test_dmov_writes_a_32_bit_constant(void) {
 }
 
 /*
- * The captured rung, byte for byte, from a Structured Ladder DMOV block:
+ * The three captured rungs, byte for byte, from Structured Ladder DMOV blocks:
  *
  *   X0 -- DMOV s=999 d=D2000
+ *   X0 -- DMOV s=888 d=D2002
+ *   X0 -- DMOV s=777 d=D1000
  *
  * Both halves of the destination pair matter. The high type is
- * OPERAND_POINTER, not the 0x80 a 16-bit destination carries, and rejecting it
- * made the instruction do nothing at all. The address is then the register
- * index rather than twice it, and decoding it the 16-bit way sent 999 to
- * D1000 - the right value in the wrong register, which is far quieter.
+ * OPERAND_POINTER, not the 0x80 a low D destination carries. It selects a
+ * D1000 base while the value remains a byte offset: 0 maps to D1000, 2000 maps
+ * to D2000, and 2004 maps to D2002.
  */
 static void test_dmov_decodes_the_captured_structured_rung(void) {
     static const uint16_t program[] = {
@@ -832,6 +833,18 @@ static void test_dmov_decodes_the_captured_structured_rung(void) {
         0x80E7, 0x8003,         /* K999, low word */
         0x8000, 0x8000,         /* K999, high word */
         0x86D0, 0x8807,         /* D2000 */
+        0x8000, 0x8000,         /* zero padding */
+        0x2400,                 /* LD X0 */
+        0x0029,                 /* DMOV */
+        0x8078, 0x8003,         /* K888, low word */
+        0x8000, 0x8000,         /* K888, high word */
+        0x86D4, 0x8807,         /* D2002 */
+        0x8000, 0x8000,         /* zero padding */
+        0x2400,                 /* LD X0 */
+        0x0029,                 /* DMOV */
+        0x8009, 0x8003,         /* K777, low word */
+        0x8000, 0x8000,         /* K777, high word */
+        0x8600, 0x8800,         /* D1000 */
         0x8000, 0x8000,         /* zero padding */
         0x001C,                 /* FEND */
     };
@@ -843,7 +856,10 @@ static void test_dmov_decodes_the_captured_structured_rung(void) {
 
     check("captured DMOV writes 999 to D2000", 999, plc_get_d(2000));
     check("captured DMOV clears the high word", 0, plc_get_d(2001));
-    check("captured DMOV leaves the halved address alone", 0, plc_get_d(1000));
+    check("captured DMOV writes 888 to D2002", 888, plc_get_d(2002));
+    check("captured DMOV clears D2003", 0, plc_get_d(2003));
+    check("captured DMOV writes 777 to D1000", 777, plc_get_d(1000));
+    check("captured DMOV clears D1001", 0, plc_get_d(1001));
     check("captured DMOV is not an unknown opcode", 0, plc_exec_unknown_count());
 }
 

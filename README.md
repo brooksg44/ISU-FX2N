@@ -102,7 +102,7 @@ FX device X11.
   counter-reset form; compiler-inlined `CTU` execution used by `FSM_Counter`;
   and captured IEC `TON`, `TON_E`, `TOF`, `TOF_E`, `TP`, and `TP_E` forms
   with `TIME` conversion, D-register presets, `Q`, and `ET`
-- **Data movement:** `MOV`/`MOVE_E`, `BMOV`, and `FMOV`
+- **Data movement:** `MOV`/`MOVE_E`, 32-bit `DMOV`, `BMOV`, and `FMOV`
 - **Comparison:** `CMP`; signed 16-bit `LD`, `AND`, and `OR` forms of `=`, `>`,
   `<`, `<>`, `<=`, and `>=`; plus compatible captured `EQ_E`/`NE_E` forms
 - **Arithmetic and word logic:** `ADD`, `SUB`, `MUL`, `DIV`, `INC`, `DEC`,

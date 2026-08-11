@@ -151,7 +151,8 @@ than a coincidence.
 function blocks, but nothing in the encoding is `TIME`-specific: each 32-bit
 operand is two typed operand pairs, low word first.
 
-A Structured Ladder `DMOV` block with `s = 999` and `d = D2000` captures as:
+A Structured Ladder test with destinations D2000, D2002, and D1000 establishes
+both the operand layout and the extended-D address bank. Its first rung is:
 
 ```text
 2400              LD X0
@@ -172,14 +173,18 @@ operands in structured POUs, so this is the established pattern rather than a
 special case. Rejecting it made a downloaded `DMOV` do nothing at all, with the
 destination staying at zero and `0x0029` reported as the last unknown opcode.
 
-**That type byte is also the unit the address is written in.** `0x07D0` is
-2000, and the destination is D2000 — the register index, not twice it.
-`OPERAND_CONST` means the byte address a 16-bit operand uses, `OPERAND_POINTER`
-the index. Reading the index as a byte address halves it, which sent 999 to
-D1000 for a rung whose destination was D2000: the right value in the wrong
-register, and much quieter than the outright rejection above. It was caught
-only because the rung was written against a register far enough from its own
-half to be obvious.
+**The `0x88` type selects a D1000-based bank; the value is still a byte
+offset.** The complete capture contains these destinations:
+
+```text
+86D0 8807         D2000 = D(1000 + 0x07D0 / 2)
+86D4 8807         D2002 = D(1000 + 0x07D4 / 2)
+8600 8800         D1000 = D(1000 + 0x0000 / 2)
+```
+
+Treating the encoded value as a direct register index happened to decode the
+first example as D2000, but sent the other two writes to D2004 and D0. The
+three-rung capture removes that coincidence and establishes the banked rule.
 
 **The second half of the destination really is constant zero padding.** The
 high register is never named, in either the IEC timer capture or this one. An

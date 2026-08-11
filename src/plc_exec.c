@@ -243,24 +243,25 @@ static bool word_operand_register(uint16_t lo, uint16_t hi, uint16_t *reg) {
 }
 
 /*
- * Destination of a 32-bit operation, where the high type byte is the unit the
- * address is written in. Captured from the same Structured Ladder rung twice,
- * changing only the destination:
+ * Destination of a 32-bit operation. Captured from three Structured Ladder
+ * DMOV rungs whose only material difference is the destination:
  *
- *   86D0 8807   DMOV ... D2000   0x07D0 = 2000, the register index
- *   8638 8000   INC D28          0x38   = 56,   twice the index
+ *   86D0 8807   DMOV ... D2000   1000 + 0x07D0 / 2
+ *   86D4 8807   DMOV ... D2002   1000 + 0x07D4 / 2
+ *   8600 8800   DMOV ... D1000   1000 + 0x0000 / 2
  *
- * So OPERAND_POINTER addresses a register directly and OPERAND_CONST addresses
- * it by byte. Decoding the first as a byte address is what quietly wrote 999
- * to D1000 for a rung whose destination was D2000 - the instruction ran, and
- * only the register was wrong.
+ * The 0x88 high type therefore selects the D1000 bank; the encoded address is
+ * still an even byte offset. Ordinary 0x80 destinations remain byte offsets
+ * from D0.
  */
 static bool dword_operand_register(uint16_t lo, uint16_t hi, uint16_t *reg) {
     if ((lo >> 8) != OPERAND_D) {
         return false;
     }
     if ((hi >> 8) == OPERAND_POINTER) {
-        *reg = (uint16_t)((lo & 0xFF) | ((hi & 0xFF) << 8));
+        uint16_t raw = (uint16_t)((lo & 0xFF) | ((hi & 0xFF) << 8));
+        if (raw & 1u) return false;
+        *reg = (uint16_t)(1000u + raw / 2u);
         return *reg < PLC_NUM_D;
     }
     return word_operand_register(lo, hi, reg);
