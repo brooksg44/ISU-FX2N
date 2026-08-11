@@ -109,41 +109,35 @@ The current runtime supports the following relevant core operations:
 - `PLS`, whose rising edge is measured per program step rather than from the
   destination device (a device-derived edge made a held-true rung toggle the
   coil every scan instead of pulsing once)
-- `PLF`, sharing that edge memory, on an **inferred** prefix — see below
+- `PLF`, sharing that edge memory, on a captured `0x0009` prefix
 - `STL`, `RET`, and deferred STL state transfers
 - timer and counter coils with constant presets
 - a limited `MOV` form using constants and D registers
 - `END`
 
-### The `PLF` prefix is inferred, not captured
+### The `PLF` encoding
 
-`PLF` is implemented as misc operand `0x09` followed by the same device word
-`PLS` uses. That value is a deduction, and it is the only encoding in the
-decoder that no download has confirmed:
+`PLF` shares the `PLS` device word and differs only in its prefix. Captured by
+downloading a single rung and reading program memory back:
 
-- applied instructions occupy operands `0x10 + 2 * FNC`, so the basic
-  instructions live below `0x10`;
-- the captured ones there run `0x05` OUT S, `0x06` SET S, `0x07` RST S,
-  `0x08` PLS — the order the FX mnemonic tables list them in, which puts PLF
-  next at `0x09`.
+```text
+2401  LD X1
+0009  PLF prefix
+8801  PLF M1
+```
 
-`projects/TestCommsPLF.gxw` cannot settle it offline: it stores GX Works' own
-ladder format inside an Access database, not the downloaded bytecode.
+That confirms the ordering the surrounding misc operands suggest: `0x05`
+OUT S, `0x06` SET S, `0x07` RST S, `0x08` PLS, `0x09` PLF.
 
-The inference is made self-limiting at the use site. A pulse prefix is only
-honoured when the following word is a pulse coil (op nibble `8`, excluding the
-`0x80` constant marker); anything else is counted and reported as an unknown
-opcode instead of being executed. So if `0x09` turns out to mean something
-else, the symptom is a reported unknown opcode, not silently wrong ladder.
+Note that `projects/TestCommsPLF.gxw` cannot be used to re-derive this
+offline — it stores GX Works' own ladder format inside an Access database,
+not the downloaded bytecode. The capture above came from reading program
+memory off a running PLC, which is the only way to see what is actually sent.
 
-**To confirm or correct it:** download `projects/TestCommsPLF.gxw`, disconnect
-GX Works, and press `?` in a terminal. `PLF M0` compiles to two words, the
-second being `0x8800` (op nibble `8`, device nibble `8` = M, operand 0). The
-word before it in the program hex dump is the real prefix. If it is not
-`0x0009`, correct `MISC_PLF_PREFIX` in `src/plc_exec.c` — nothing else needs
-to change. If the dump instead reports `0x0009` as an unknown opcode, the
-inference is wrong in a different way and the following word is not a pulse
-coil at all.
+A pulse prefix is honoured only when the following word is a pulse coil (op
+nibble `8`, excluding the `0x80` constant marker). Anything else is counted
+and reported as an unknown opcode rather than left pending, so a misread
+prefix cannot attach itself to a genuine pulse coil further down the program.
 
 The following are known or likely gaps for the supplied project:
 

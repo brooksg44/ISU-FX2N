@@ -45,19 +45,16 @@
 #define MISC_RST_S 0x07 /* followed by one value word holding the S number */
 #define MISC_PLS_PREFIX 0x08
 /*
- * PLF prefix. INFERRED, NOT CAPTURED - the only encoding in this file that is
- * not backed by an observed download.
+ * PLF prefix, captured by downloading a single rung and reading program
+ * memory back:
  *
- * The basic instructions occupy the misc operands below 0x10 (applied
- * instructions start at 0x10 + 2 * FNC), and the captured ones run
- * 0x05 OUT S, 0x06 SET S, 0x07 RST S, 0x08 PLS, which puts PLF at 0x09 in the
- * same order the FX mnemonic tables list them. That is a pattern, not
- * evidence.
+ *   2401  LD X1
+ *   0009  PLF prefix
+ *   8801  PLF M1
  *
- * Because a wrong guess here would silently mis-execute whatever 0x09 really
- * is, the prefix is only honoured when a pulse device word actually follows
- * it - see the peek at the use site. If a download ever reports 0x0009 as an
- * unknown opcode, this constant is what to correct.
+ * So PLF shares the PLS device word and differs only in the prefix. This also
+ * confirms the ordering the surrounding misc operands suggest: 0x05 OUT S,
+ * 0x06 SET S, 0x07 RST S, 0x08 PLS, 0x09 PLF.
  */
 #define MISC_PLF_PREFIX 0x09
 #define MISC_RST_C 0x0C /* Structured Ladder counter reset + counter word */
@@ -733,11 +730,7 @@ void plc_exec_scan(void) {
                  * so opcode 0x80 exactly is excluded; anything else is
                  * rejected outright rather than left pending, which would
                  * otherwise let a misread prefix attach itself to a genuine
-                 * PLS further down the program.
-                 *
-                 * This check is what keeps the inferred PLF prefix safe: if
-                 * 0x09 turns out to be some other instruction, it is counted
-                 * as unknown and reported instead of silently executed.
+                 * pulse coil further down the program.
                  */
                 uint16_t next = fetch(off);
                 uint8_t next_opcode = (uint8_t)(next >> 8);

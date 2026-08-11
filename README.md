@@ -18,8 +18,8 @@ interpreter to the wire protocol.
 2. In GX Works 2, create a project of type **FXCPU / FX2N(C)**.
 3. **Connection Destination** → PC side **Serial USB**, RS-232C, and pick the
    COM port the Pico enumerated as. Baud rate is ignored (see below).
-4. **Online → Write to PLC** to download, then press **I9** on the trainer to
-   put the PLC in RUN.
+4. **Online → Write to PLC** to download, then **Online → Remote Operation →
+   RUN** to start your program. A download always stops the PLC.
 
 `sts0` (GPIO2) lit means RUN. Your program is saved to flash and survives a
 power cycle.
@@ -45,9 +45,10 @@ outputs *descend* — this is a property of the trainer wiring, not a mistake.
 an LED cathode is grounded, so a high output pin lights it. Inputs use internal
 pull-downs so an open contact reads as 0.
 
-**I9 toggles RUN/STOP.** A real FX2N has a physical RUN/STOP switch and the
-trainer has no pin for one, so I9 stands in. A download issues a remote STOP,
-so press I9 afterwards to run your program.
+**There is no RUN/STOP switch.** A real FX2N has a physical one and the
+trainer has no pin for it, so RUN/STOP is controlled entirely from GX Works 2
+under **Online → Remote Operation**. All ten trainer inputs stay available to
+your program.
 
 ---
 
@@ -79,9 +80,10 @@ Special devices maintained by the runtime:
 | D8030–D8032 | analog inputs AI0–AI2 |
 
 GX Works 2 **Online → Remote Operation** controls RUN/STOP using the captured
-FX special-relay sequence (`M8035`–`M8037`). All ten physical trainer inputs
-remain available to the user program; in particular, I9 maps to FX device X11
-and is not reserved for local RUN/STOP control.
+FX special-relay sequence (`M8035`–`M8037`). This is the only way to change
+mode: all ten physical trainer inputs remain available to the user program,
+so none is reserved as a RUN/STOP switch. I9 is an ordinary input mapping to
+FX device X11.
 
 ---
 
@@ -116,14 +118,6 @@ These forms have been exercised by the GX Works teaching programs listed in
 [`TestedPrg.md`](TestedPrg.md). Support is based on the exact instruction words
 observed in downloads; similarly named variants with different operand types
 may still require additional decoding.
-
-**`PLF` is the one exception.** Its prefix word is inferred from where PLF
-falls in the basic-instruction ordering, not captured from a download, so it
-is the only encoding here not confirmed against real GX Works output. The
-decoder honours the prefix only when a pulse coil actually follows it, so a
-wrong inference is reported as an unknown opcode rather than executed as
-something else — but a `PLF` that does not fire is worth checking against the
-diagnostic dump before assuming the ladder is at fault.
 
 Not yet implemented includes `MC`/`MCR`, `INV`, `ZCP`, double-word and
 pulse variants of the applied instructions, and generic IEC function-block
@@ -247,8 +241,8 @@ the single most important idea to take from this source. See `plc_scan.h`.
   monitor buffer about once every 2.8 seconds over this serial connection, so
   X, Y, S and M changes animate correctly but are not immediate. The monitor
   list is stored separately and does not overwrite D registers.
-- **Remote RUN is not implemented.** A download issues remote STOP correctly;
-  use I9 to return to RUN.
+- **RUN/STOP is remote-only.** The trainer has no RUN/STOP switch, so a PLC
+  left in STOP can only be started from GX Works 2.
 - **Configurable latch ranges are not imported yet.** On STOP to RUN, Y, S,
   general M, general D, T0-T245, and C0-C99 are cleared. Inputs, special
   devices, T246-T255, and C100-C255 are retained. This gives `M8002` a clean
