@@ -192,8 +192,11 @@ earlier revision also accepted `D(dst + 1)` there on the assumption that a
 hand-written `DMOV` would name it; the capture disproves that, and the
 speculation has been removed.
 
-This matters because the FX2NC-ENET-ADP parameter block is written with
-`DMOV` — see the network configuration notes.
+`DMOV` was originally wanted for the FX2NC-ENET-ADP parameter block, which
+writes its IP settings to D1000–D1008 that way. That approach was dropped:
+the Modbus TCP slave takes its address by DHCP, and students read it from the
+`?` dump after provisioning the trainer. `DMOV` stays because it is an
+ordinary FX instruction that teaching programs use in their own right.
 
 The following are known or likely gaps for the supplied project:
 
