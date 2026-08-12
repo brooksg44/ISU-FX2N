@@ -53,7 +53,13 @@ void plc_timer_drive(uint16_t idx, uint16_t preset, bool enable) {
     last_timer_idx = idx;
     last_timer_preset = preset;
     last_timer_enable = enable;
-    if (idx < PLC_NUM_T) plc_mem.t[idx].preset = preset;
+    if (idx < PLC_NUM_T) {
+        plc_mem.t[idx].preset = preset;
+        if (!enable && idx < 246) {
+            plc_mem.t[idx].current = 0;
+            plc_mem.t[idx].done = false;
+        }
+    }
 }
 void plc_timer_reset(uint16_t idx) { last_timer_reset = idx; }
 void plc_counter_drive(uint16_t idx, int32_t preset, bool enable) {
@@ -108,6 +114,84 @@ static void test_inactive_step_is_gated(void) {
 
     check("inactive S20 gates LD rung", 0, plc_get_y(0));
     check("inactive S20 also gates OR rung", 0, plc_get_y(1));
+}
+
+static void test_stl_eno_follows_target_state(void) {
+    static const uint16_t program[] = {
+        W(OPC_STL, 20), W(OPC_OUT_Y, 0),
+        W(OPC_RET, 0), W(OPC_END, 0x0F),
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+
+    plc_exec_scan();
+    check("inactive STL target makes ENO false", 0, plc_get_y(0));
+
+    plc_set_s(20, true);
+    plc_exec_scan();
+    check("active STL target makes ENO true", 1, plc_get_y(0));
+}
+
+static void test_function_block_call_runs_after_false_input_output(void) {
+    /* GX Works emits a stateful FB call as:
+     *   LD <input>; OUT <instance input>; CALL <instance body>
+     * The OUT ends the input rung. The CALL must still execute when the input
+     * is false so the instance body can clear a stale output such as TON.Q. */
+    static const uint16_t program[] = {
+        0xF00C,                         /* STL S12 */
+        0x2F00, 0xC800,                 /* LD M8000; OUT M0 (FB input) */
+        0x2F00,                         /* generated parameter setup rung */
+        0x0012, 0x8842, 0x8000,         /* CALL P33 */
+        0xF7FF, 0x001C,                 /* RET; FEND */
+        0xB021,                         /* P33 */
+        0x2800, 0xC801, 0x0014,         /* LD M0; OUT M1 (FB Q); SRET */
+        0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_set_m(1, true);                 /* stale Q from the prior cycle */
+
+    plc_exec_scan();
+    check("inactive STL immediately clears FB Q", 0, plc_get_m(1));
+
+    plc_set_s(12, true);
+    plc_exec_scan();
+    check("active STL passes true input through FB", 1, plc_get_m(1));
+}
+
+static void test_captured_s12_ton_clears_q_while_step_inactive(void) {
+    /* Exact S12 block and P33 TON body from the 2026-08-12 DMS download.
+     * CD98 is the instance IN (M1432), T198 is its timer, and CD97 is the
+     * instance Q (M1431). */
+    static const uint16_t program[] = {
+        0xF00C, 0x2F00, 0xD501, 0x2F00, 0xCD98, 0x2F00,
+        0x0029, 0x80E8, 0x8003, 0x8000, 0x8000,
+        0x86B4, 0x8607, 0x8000, 0x8000,
+        0x0012, 0x8842, 0x8000,
+        0x2F00, 0x4400, 0x4D97, 0x0006, 0x800D,
+        0xF7FF, 0x001C,
+        0xB021, 0x2D98,
+        0x003F, 0x86B4, 0x8607, 0x8000, 0x8000,
+        0x8064, 0x8000, 0x8000, 0x8000,
+        0x86A8, 0x8607, 0x8000, 0x8000,
+        0x06C6, 0x86A8, 0x8607,
+        0x26C6, 0xCD97, 0x2F00,
+        0x003C, 0x868C, 0x8201, 0x8064, 0x8000,
+        0x86B0, 0x8607, 0x0014, 0x000F,
+    };
+    plc_memory_init();
+    load_program(program, sizeof(program) / sizeof(program[0]));
+    plc_set_m(M_RUN_MONITOR, true);
+    plc_set_m(1431, true);
+    plc_mem.t[198].current = 10;
+    plc_mem.t[198].done = true;
+
+    plc_exec_scan();
+
+    check("captured inactive S12 stores false TON IN", 0, plc_get_m(1432));
+    check("captured inactive S12 resets T198", 0, plc_mem.t[198].done);
+    check("captured inactive S12 clears TON Q", 0, plc_get_m(1431));
 }
 
 static void test_transfer_and_handover(void) {
@@ -905,6 +989,9 @@ static void test_dmov_rejects_non_zero_padding(void) {
 
 int main(void) {
     test_inactive_step_is_gated();
+    test_stl_eno_follows_target_state();
+    test_function_block_call_runs_after_false_input_output();
+    test_captured_s12_ton_clears_q_while_step_inactive();
     test_transfer_and_handover();
     test_multiple_state_merge();
     test_ladder_set_is_not_a_transfer();

@@ -115,6 +115,15 @@ void plc_scan_begin(void) {
     scan_start_us = time_us_64();
     advance_ticks();
 
+    /* IEC timer function blocks are emitted as conditional subroutine calls.
+     * If their EN path is false the CALL is skipped, so no OUT T instruction
+     * runs to tell the timer that its input dropped. Track which timer coils
+     * are evaluated this scan; plc_scan_end() resets non-retentive timers
+     * whose generated function block was not called. */
+    for (uint16_t i = 0; i < PLC_NUM_T; i++) {
+        plc_mem.t[i].driven = false;
+    }
+
     uint16_t inputs = board_read_inputs();
     for (uint16_t i = 0; i < BOARD_NUM_INPUTS; i++) {
         plc_set_x(i, (inputs >> i) & 1u);
@@ -128,6 +137,17 @@ void plc_scan_begin(void) {
 }
 
 void plc_scan_end(void) {
+    /* An ordinary OUT T with a false rung resets itself in
+     * plc_timer_drive(). This second path covers compiled IEC TON calls that
+     * were skipped altogether because EN (for example an inactive STL step)
+     * was false. Retentive timers deliberately keep their accumulated state. */
+    for (uint16_t i = 0; i < PLC_NUM_T; i++) {
+        if (!plc_mem.t[i].driven && !timer_is_retentive(i)) {
+            plc_mem.t[i].current = 0;
+            plc_mem.t[i].done = false;
+        }
+    }
+
     if (mode == PLC_MODE_RUN) {
         uint16_t bits = 0;
         for (uint16_t i = 0; i < BOARD_NUM_OUTPUTS; i++) {

@@ -678,6 +678,7 @@ void plc_exec_scan(void) {
     uint8_t block_sp = 0;
     uint32_t call_return[CALL_STACK_DEPTH];
     uint8_t call_sp = 0;
+    bool output_just_executed = false;
 
     unknown_count = 0;
 
@@ -702,6 +703,8 @@ void plc_exec_scan(void) {
         uint8_t operand = (uint8_t)(word & 0xFF);
         uint8_t op = (uint8_t)(opcode >> 4);
         uint8_t dev = (uint8_t)(opcode & 0x0F);
+        bool call_after_output = output_just_executed;
+        output_just_executed = false;
 
         bool consecutive_stl = stl.in_stl && stl.accepting_sources;
         if (opcode != OPCODE_STL) {
@@ -741,10 +744,20 @@ void plc_exec_scan(void) {
                              ((target_lo & 0xFF) & 1u) == 0;
                 uint8_t pointer = (uint8_t)((target_lo & 0xFF) / 2u);
                 uint32_t target = valid ? find_subroutine(pointer) : PLC_PROGRAM_BYTES;
+                /* Structured function blocks store their input with OUT and
+                 * place CALL immediately afterward. OUT terminates that
+                 * input rung; CALL still has to run when the stored input is
+                 * false so stateful blocks such as TON can clear Q and ET. */
+                /* Calls emitted for FBs inside STL must also execute while
+                 * the step is inactive. The compiler can insert parameter
+                 * setup (for example LD M8000 / DMOV PT) between the input
+                 * OUT and CALL, and the FB must see the stored false input
+                 * to clear outputs such as TON.Q. */
+                bool enabled = result || call_after_output || stl.in_stl;
                 if (!valid || target >= PLC_PROGRAM_BYTES ||
-                    (result && call_sp >= CALL_STACK_DEPTH)) {
+                    (enabled && call_sp >= CALL_STACK_DEPTH)) {
                     bad_instruction(word);
-                } else if (result) {
+                } else if (enabled) {
                     call_return[call_sp++] = off;
                     off = target;
                 }
@@ -1118,6 +1131,7 @@ void plc_exec_scan(void) {
                     write_bit(dev, operand, result);
                 }
                 block_sp = 0;
+                output_just_executed = true;
                 break;
 
             case OP_SET:
